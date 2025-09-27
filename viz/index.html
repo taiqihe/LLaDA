@@ -1,0 +1,1393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diffusion Language Model Visualizer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Menlo', 'Monaco', monospace;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #4a9eff;
+            margin-bottom: 10px;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-bottom: 30px;
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        .control-section {
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 15px;
+            background: #1a1a1a;
+        }
+
+        .control-section h3 {
+            color: #4a9eff;
+            margin-bottom: 15px;
+            font-size: 14px;
+            text-transform: uppercase;
+        }
+
+        .control-section.disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .control-row {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .subsection {
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 15px;
+            background: #252525;
+        }
+
+        .subsection h4 {
+            color: #aaa;
+            margin-bottom: 10px;
+            font-size: 12px;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+
+        .control-group small {
+            color: #888;
+            font-size: 10px;
+            margin-top: 2px;
+            display: block;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .control-group label {
+            font-size: 12px;
+            color: #999;
+            text-transform: uppercase;
+        }
+
+        .control-group input, .control-group select, .control-group textarea {
+            padding: 8px;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            color: #e0e0e0;
+            border-radius: 4px;
+            font-family: inherit;
+        }
+
+        .control-group textarea {
+            resize: vertical;
+            min-height: 60px;
+            width: 300px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .btn {
+            padding: 10px 16px;
+            background: #4a9eff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background: #357abd;
+        }
+
+        .btn:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        .btn.secondary {
+            background: #666;
+        }
+
+        .btn.secondary:hover {
+            background: #777;
+        }
+
+        .status {
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #2d2d2d;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .status.connected {
+            border-left: 4px solid #4caf50;
+        }
+
+        .status.error {
+            border-left: 4px solid #f44336;
+        }
+
+        .visualization {
+            background: #2d2d2d;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .step-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #1a1a1a;
+            border-radius: 4px;
+        }
+
+        .step-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .token-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            font-size: 12px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .token-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px;
+            border-radius: 4px;
+            background: #1a1a1a;
+            border-left: 3px solid transparent;
+            transition: all 0.2s ease;
+        }
+
+        .token-row.prompt {
+            background: #1a2d1a;
+            border-left: 3px solid #4caf50;
+        }
+
+        .token-row.block-boundary {
+            border-top: 2px solid #4a9eff;
+            margin-top: 8px;
+            background: #1a2332;
+            border-left: 3px solid #4a9eff;
+        }
+
+        .token-row.block-boundary.prompt {
+            background: #1a2d1a;
+            border-left: 3px solid #4caf50;
+        }
+
+        .token-row.selected {
+            background: #2d1a2d;
+            border-left: 3px solid #ff6b9d;
+            box-shadow: 0 0 8px rgba(255, 107, 157, 0.3);
+        }
+
+        .token-row.recently-selected {
+            background: #2d2d1a;
+            border-left: 3px solid #ffd700;
+            animation: highlightPulse 1s ease-in-out;
+        }
+
+        @keyframes highlightPulse {
+            0% { box-shadow: 0 0 8px rgba(255, 215, 0, 0.6); }
+            50% { box-shadow: 0 0 15px rgba(255, 215, 0, 0.8); }
+            100% { box-shadow: 0 0 8px rgba(255, 215, 0, 0.3); }
+        }
+
+        .position-info {
+            min-width: 80px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: #999;
+        }
+
+        .position-number {
+            font-size: 10px;
+            color: #666;
+        }
+
+        .current-token {
+            font-weight: bold;
+            color: #4a9eff;
+            background: #1a2332;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-top: 2px;
+            border: 1px solid #444;
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+
+        .current-token.masked {
+            color: #ff6b6b;
+            background: #331a1a;
+            border: 1px solid #ff6b6b;
+        }
+
+        .current-token.prompt {
+            color: #4caf50;
+            background: #1a2d1a;
+            border: 1px solid #4caf50;
+        }
+
+        .current-token.selected {
+            color: #ff6b9d;
+            background: #2d1a2d;
+            border: 1px solid #ff6b9d;
+            text-shadow: 0 0 4px rgba(255, 107, 157, 0.5);
+        }
+
+        .current-token.recently-selected {
+            color: #ffd700;
+            background: #2d2d1a;
+            border: 1px solid #ffd700;
+            text-shadow: 0 0 4px rgba(255, 215, 0, 0.5);
+        }
+
+        .candidates {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            flex: 1;
+        }
+
+        .token-candidate {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 4px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+            min-width: 60px;
+        }
+
+        .token-candidate:hover {
+            border-color: #4a9eff;
+            background: #1a2332;
+        }
+
+        .token-candidate.selected {
+            background: #2d1a2d !important;
+            color: #ff6b9d;
+            border: 1px solid #ff6b9d !important;
+            box-shadow: 0 0 8px rgba(255, 107, 157, 0.4);
+            transform: scale(1.05);
+            position: relative;
+        }
+
+        .token-candidate.selected::after {
+            content: '✓';
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            background: #ff6b9d;
+            color: white;
+            border-radius: 50%;
+            width: 14px;
+            height: 14px;
+            font-size: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            border: 1px solid white;
+        }
+
+        .token-text {
+            font-weight: bold;
+            margin-bottom: 2px;
+            word-break: break-all;
+            max-width: 80px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .token-prob {
+            font-size: 9px;
+            color: #999;
+        }
+
+        .token-logit {
+            font-size: 8px;
+            color: #666;
+        }
+
+        .raw-logit {
+            font-size: 8px;
+            color: #999;
+            margin-top: 1px;
+        }
+
+        .forward-pass-mode {
+            background: #1a3d3d !important;
+            border: 1px solid #4a9e9e;
+        }
+
+        .forward-pass-mode .token-row {
+            background: #0d2626;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .generation-complete {
+            text-align: center;
+            padding: 20px;
+            background: #1a3d1a;
+            border: 1px solid #4caf50;
+            border-radius: 4px;
+            color: #4caf50;
+            margin-bottom: 20px;
+        }
+
+        .manual-selections {
+            background: #2d2d2d;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .manual-selections h3 {
+            margin-bottom: 10px;
+            color: #4a9eff;
+            font-size: 14px;
+        }
+
+        .selections-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .selection-item {
+            background: #1a1a1a;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .selection-remove {
+            background: #ff6b6b;
+            color: white;
+            border: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .legend {
+            background: #2d2d2d;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 20px;
+            font-size: 11px;
+        }
+
+        .legend-title {
+            font-weight: bold;
+            color: #4a9eff;
+            margin-bottom: 8px;
+        }
+
+        .legend-items {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+            border: 1px solid #444;
+        }
+
+        .legend-color.prompt { background: #4caf50; }
+        .legend-color.masked { background: #ff6b6b; }
+        .legend-color.selected { background: #ff6b9d; }
+        .legend-color.recently-selected { background: #ffd700; }
+        .legend-color.block-boundary { background: #4a9eff; }
+
+        .candidate-truncation {
+            display: flex;
+            align-items: center;
+            padding: 4px 8px;
+            margin: 2px;
+            background: #333;
+            border: 1px dashed #666;
+            border-radius: 4px;
+            color: #aaa;
+            font-size: 10px;
+            min-width: 60px;
+        }
+
+        .truncation-indicator {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+
+        .truncation-text {
+            font-weight: bold;
+            color: #999;
+            margin-bottom: 2px;
+        }
+
+        .truncation-hint {
+            color: #666;
+            font-size: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Diffusion Language Model Visualizer</h1>
+            <p>Interactive visualization of token generation process</p>
+        </div>
+
+        <div class="controls">
+            <!-- Basic Setup Section -->
+            <div class="control-section" id="basic_setup">
+                <h3>1. Model & Prompt Setup</h3>
+                <div class="control-row">
+                    <div class="control-group">
+                        <label>Model Path</label>
+                        <input type="text" id="model_path" placeholder="e.g., GSAI-ML/LLaDA-8B-Instruct or /path/to/local/model" value="GSAI-ML/LLaDA-8B-Instruct">
+                    </div>
+
+                    <div class="control-group">
+                        <label>Prompt</label>
+                        <textarea id="prompt" placeholder="Enter your prompt here...">Kermit the Frog is a Muppet character created in 1955 and originally performed by Jim Henson.</textarea>
+                    </div>
+
+                    <div class="control-group">
+                        <label>Generation Length</label>
+                        <input type="number" id="gen_length" value="128" min="1" max="512">
+                    </div>
+
+                    <div class="control-group">
+                        <label>Max Candidates to Display</label>
+                        <input type="number" id="max_display_candidates" value="10" min="3" max="50" step="1">
+                        <small>Limit candidate tokens shown per position (0 = show all)</small>
+                    </div>
+
+                    <div class="button-group">
+                        <button class="btn" id="load_model">Load Model</button>
+                        <button class="btn" id="initialize" disabled>Initialize Generation</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Generation Controls Section -->
+            <div class="control-section" id="generation_controls">
+                <h3>Generation Controls</h3>
+                <div class="control-row">
+                    <div class="button-group">
+                        <button class="btn secondary" id="forward_pass" disabled>Forward Pass</button>
+                        <button class="btn secondary" id="step" disabled>Step</button>
+                        <button class="btn secondary" id="stop_auto" disabled>Stop</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Probability Processing Section (Hidden initially) -->
+            <div class="control-section disabled" id="probability_processing">
+                <h3>2. Probability Processing</h3>
+
+                <!-- Softmax Temperature Subsection -->
+                <div class="subsection">
+                    <h4>Softmax Temperature</h4>
+                    <div class="control-row">
+                        <div class="control-group">
+                            <label>Temperature</label>
+                            <input type="number" id="softmax_temperature" value="1.0" min="0.1" max="5.0" step="0.1">
+                            <small>Controls randomness in probability distribution (higher = more random)</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Gumbel Noise Subsection -->
+                <div class="subsection">
+                    <h4>Gumbel Noise</h4>
+                    <div class="control-row">
+                        <div class="control-group">
+                            <label>
+                                <input type="checkbox" id="apply_gumbel_noise"> Enable Gumbel Noise
+                            </label>
+                        </div>
+                        <div class="control-group">
+                            <label>Gumbel Temperature</label>
+                            <input type="number" id="gumbel_temperature" value="0.0" min="0" max="2" step="0.1" disabled>
+                            <small>Temperature for Gumbel noise sampling</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sampling Controls Subsection -->
+                <div class="subsection">
+                    <h4>Sampling Controls</h4>
+                    <div class="control-row">
+                        <div class="control-group">
+                            <label>Top-K</label>
+                            <input type="number" id="top_k" value="10" min="1" max="100">
+                            <small>Only consider top K tokens</small>
+                        </div>
+                        <div class="control-group">
+                            <label>Top-P (Nucleus)</label>
+                            <input type="number" id="top_p" value="1.0" min="0.01" max="1.0" step="0.01">
+                            <small>Cumulative probability threshold for token selection</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="button-group">
+                    <button class="btn" id="apply_probability_settings" disabled>Apply Probability Settings</button>
+                </div>
+            </div>
+
+            <!-- Token Selection Section (Hidden initially) -->
+            <div class="control-section disabled" id="token_selection">
+                <h3>3. Token Selection & Remasking</h3>
+                <div class="control-row">
+                    <div class="control-group">
+                        <label>Remasking Strategy</label>
+                        <select id="remasking">
+                            <option value="low_confidence">Low Confidence</option>
+                            <option value="high_confidence">High Confidence</option>
+                            <option value="low_entropy">Low Entropy</option>
+                            <option value="high_entropy">High Entropy</option>
+                            <option value="random">Random</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label>Block Length</label>
+                        <input type="number" id="block_length" value="32" min="1" max="128">
+                    </div>
+
+                    <div class="control-group">
+                        <label>Tokens to Select</label>
+                        <input type="number" id="tokens_to_select" value="1" min="1" max="32">
+                        <small>Number of tokens to decode in each selection step</small>
+                    </div>
+
+                    <div class="button-group">
+                        <button class="btn secondary" id="select_tokens" disabled>Select Tokens</button>
+                        <button class="btn secondary" id="auto_select" disabled>Auto Select</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="status" id="status">
+            Connecting to server...
+        </div>
+
+        <div class="status" id="model_status" style="display: none;">
+            <strong>Model:</strong> <span id="model_info">Not loaded</span>
+        </div>
+
+        <div class="manual-selections" id="manual_selections" style="display: none;">
+            <h3>Manual Token Selections</h3>
+            <div class="selections-list" id="selections_list"></div>
+        </div>
+
+        <div class="visualization" id="visualization" style="display: none;">
+            <div class="step-info">
+                <div>
+                    <strong>Step:</strong> <span id="current_step">0</span> |
+                    <strong>Block:</strong> <span id="current_block">0</span>
+                </div>
+                <div class="step-controls">
+                    <button class="btn secondary" id="rewind" disabled>Rewind</button>
+                    <input type="number" id="rewind_step" placeholder="Step" min="0" style="width: 80px;">
+                </div>
+            </div>
+
+            <div class="legend" id="token_legend">
+                <div class="legend-title">Token Types</div>
+                <div class="legend-items">
+                    <div class="legend-item">
+                        <div class="legend-color prompt"></div>
+                        <span>Prompt</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color masked"></div>
+                        <span>Masked</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color selected"></div>
+                        <span>Selected</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color recently-selected"></div>
+                        <span>Recently Selected</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color block-boundary"></div>
+                        <span>Block Boundary</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="token-grid" id="token_grid">
+                <div class="loading">Initialize generation to see token visualization</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class DiffusionVisualizer {
+            constructor() {
+                this.ws = null;
+                this.currentState = null;
+                this.forwardPassResult = null;
+                this.manualSelections = {};
+                this.recentlySelected = new Set();
+                this.autoStepping = false;
+                this.autoStepInterval = null;
+                this.isForwardPassMode = false;
+
+                this.initializeWebSocket();
+                this.bindEvents();
+            }
+
+            initializeWebSocket() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                this.ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+                this.ws.onopen = () => {
+                    this.updateStatus('Connected to server', 'connected');
+                    // Model status will be updated when server sends model_status message
+                };
+
+                this.ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    this.handleMessage(message);
+                };
+
+                this.ws.onclose = (event) => {
+                    console.log('WebSocket closed:', event.code, event.reason);
+                    this.updateStatus(`Disconnected from server (${event.code}: ${event.reason})`, 'error');
+                };
+
+                this.ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    this.updateStatus('Connection error', 'error');
+                };
+            }
+
+            bindEvents() {
+                document.getElementById('load_model').addEventListener('click', () => this.loadModel());
+                document.getElementById('initialize').addEventListener('click', () => this.initialize());
+                document.getElementById('forward_pass').addEventListener('click', () => this.runForwardPass());
+                document.getElementById('step').addEventListener('click', () => this.step());
+                document.getElementById('select_tokens').addEventListener('click', () => this.selectTokensOnly());
+                document.getElementById('auto_select').addEventListener('click', () => this.startAutoStepping());
+                document.getElementById('stop_auto').addEventListener('click', () => this.stopAutoStepping());
+                document.getElementById('rewind').addEventListener('click', () => this.rewind());
+                document.getElementById('apply_probability_settings').addEventListener('click', () => this.applyProbabilitySettings());
+
+                // Gumbel noise checkbox controls
+                document.getElementById('apply_gumbel_noise').addEventListener('change', () => this.toggleGumbelTemperature());
+
+                // Update block length constraint
+                document.getElementById('gen_length').addEventListener('input', this.updateBlockLengthConstraint);
+                document.getElementById('block_length').addEventListener('input', this.updateBlockLengthConstraint);
+            }
+
+            updateBlockLengthConstraint() {
+                const genLength = parseInt(document.getElementById('gen_length').value);
+                const blockLength = parseInt(document.getElementById('block_length').value);
+
+                if (genLength % blockLength !== 0) {
+                    const maxBlockLength = Math.floor(genLength / Math.floor(genLength / blockLength));
+                    document.getElementById('block_length').value = maxBlockLength;
+                }
+            }
+
+            updateStatus(message, type = '') {
+                const statusEl = document.getElementById('status');
+                statusEl.textContent = message;
+                statusEl.className = `status ${type}`;
+            }
+
+            updateModelStatus(message, type = '') {
+                const modelStatusEl = document.getElementById('model_status');
+                const modelInfoEl = document.getElementById('model_info');
+                modelInfoEl.textContent = message;
+                modelStatusEl.className = `status ${type}`;
+                modelStatusEl.style.display = 'block';
+            }
+
+            loadModel() {
+                const modelPath = document.getElementById('model_path').value.trim();
+
+                if (!modelPath) {
+                    this.updateStatus('Please enter a model path', 'error');
+                    return;
+                }
+
+                this.updateStatus('Loading model...', '');
+                this.updateModelStatus('Loading...', '');
+
+                // Reset sections when loading new model
+                this.resetSectionsForNewModel();
+
+                document.getElementById('load_model').disabled = true;
+
+                this.ws.send(JSON.stringify({
+                    type: 'load_model',
+                    model_path: modelPath
+                }));
+            }
+
+            runForwardPass() {
+                const prompt = document.getElementById('prompt').value;
+
+                if (!prompt.trim()) {
+                    this.updateStatus('Please enter a prompt', 'error');
+                    return;
+                }
+
+                this.updateStatus('Running forward pass...', '');
+                this.isForwardPassMode = true;
+
+                // Tokenize the prompt (simplified - in reality we'd need proper tokenization)
+                // For now, we'll send the prompt and let the backend tokenize it
+                this.ws.send(JSON.stringify({
+                    type: 'tokenize_and_forward',
+                    prompt: prompt,
+                    top_k: parseInt(document.getElementById('top_k').value),
+                    gen_length: parseInt(document.getElementById('gen_length').value)
+                }));
+            }
+
+            initialize() {
+                const prompt = document.getElementById('prompt').value;
+                const genLength = parseInt(document.getElementById('gen_length').value);
+                const blockLength = parseInt(document.getElementById('block_length').value);
+
+                if (!prompt.trim()) {
+                    this.updateStatus('Please enter a prompt', 'error');
+                    return;
+                }
+
+                this.manualSelections = {};
+                this.updateManualSelections();
+                this.isForwardPassMode = false;
+
+                this.ws.send(JSON.stringify({
+                    type: 'initialize',
+                    prompt: prompt,
+                    gen_length: genLength,
+                    block_length: blockLength
+                }));
+
+                this.updateStatus('Initializing generation...', '');
+            }
+
+            step() {
+                if (!this.currentState) return;
+
+                const tokensToSelect = parseInt(document.getElementById('tokens_to_select').value);
+                const blockLength = parseInt(document.getElementById('block_length').value);
+                const gumbelTemperature = parseFloat(document.getElementById('gumbel_temperature').value);
+                const remasking = document.getElementById('remasking').value;
+                const topK = parseInt(document.getElementById('top_k').value);
+
+                this.ws.send(JSON.stringify({
+                    type: 'step',
+                    tokens_to_select: tokensToSelect,
+                    block_length: blockLength,
+                    gumbel_temperature: gumbelTemperature,
+                    remasking: remasking,
+                    top_k: topK,
+                    manual_selections: this.manualSelections
+                }));
+
+                this.updateStatus('Selecting tokens...', '');
+            }
+
+            selectTokensOnly() {
+                if (!this.currentState) return;
+
+                const tokensToSelect = parseInt(document.getElementById('tokens_to_select').value);
+                const remasking = document.getElementById('remasking').value;
+
+                this.ws.send(JSON.stringify({
+                    type: 'select_tokens_only',
+                    tokens_to_select: tokensToSelect,
+                    remasking: remasking,
+                    manual_selections: this.manualSelections
+                }));
+
+                this.updateStatus('Selecting tokens...', '');
+            }
+
+            startAutoStepping() {
+                if (this.autoStepping) return;
+
+                this.autoStepping = true;
+                document.getElementById('auto_select').disabled = true;
+                document.getElementById('stop_auto').disabled = false;
+
+                // Auto-select now only does token selection (no forward pass)
+                this.autoStepInterval = setInterval(() => {
+                    if (!this.autoStepping) return;
+                    this.selectTokensOnly();
+                }, 1000);
+            }
+
+            stopAutoStepping() {
+                this.autoStepping = false;
+                if (this.autoStepInterval) {
+                    clearInterval(this.autoStepInterval);
+                    this.autoStepInterval = null;
+                }
+                document.getElementById('auto_select').disabled = false;
+                document.getElementById('stop_auto').disabled = true;
+            }
+
+            rewind() {
+                const step = parseInt(document.getElementById('rewind_step').value);
+                if (isNaN(step) || step < 0) return;
+
+                this.ws.send(JSON.stringify({
+                    type: 'rewind',
+                    step: step
+                }));
+            }
+
+            updateNoise() {
+                if (!this.forwardPassResult) return;
+
+                const applyNoise = document.getElementById('apply_gumbel_noise').checked;
+                const temperature = parseFloat(document.getElementById('temperature').value);
+
+                if (applyNoise && temperature > 0) {
+                    this.applyGumbelNoise(temperature);
+                } else {
+                    this.showOriginalLogits();
+                }
+            }
+
+            applyGumbelNoise(temperature) {
+                if (!this.forwardPassResult) return;
+
+                // Apply Gumbel noise client-side for real-time updates
+                const noisyResult = JSON.parse(JSON.stringify(this.forwardPassResult)); // Deep copy
+
+                noisyResult.positions.forEach((position, posIdx) => {
+                    if (posIdx < this.forwardPassResult.raw_logits.length) {
+                        const originalLogits = this.forwardPassResult.raw_logits[posIdx];
+
+                        position.candidates.forEach(candidate => {
+                            const originalLogit = originalLogits[candidate.token_id];
+
+                            // Simple Gumbel noise approximation (not exact but shows the effect)
+                            const noise = Math.random();
+                            const gumbelNoise = Math.pow(-Math.log(noise), temperature);
+                            const noisyValue = Math.exp(originalLogit) / gumbelNoise;
+
+                            candidate.noisy_value = noisyValue;
+                        });
+
+                        // Recalculate probabilities
+                        const totalNoisy = position.candidates.reduce((sum, c) => sum + c.noisy_value, 0);
+                        position.candidates.forEach(candidate => {
+                            candidate.prob = candidate.noisy_value / totalNoisy;
+                        });
+
+                        // Re-sort by probability
+                        position.candidates.sort((a, b) => b.prob - a.prob);
+                        position.candidates.forEach((candidate, rank) => {
+                            candidate.rank = rank;
+                        });
+                    }
+                });
+
+                this.updateTokenGrid(noisyResult.positions);
+            }
+
+            showOriginalLogits() {
+                if (!this.forwardPassResult) return;
+                this.updateTokenGrid(this.forwardPassResult.positions);
+            }
+
+            handleMessage(message) {
+                if (message.type === 'state_update') {
+                    // Track newly decoded tokens for highlighting
+                    if (this.currentState) {
+                        this.trackNewlyDecoded(this.currentState, message.state);
+                    }
+
+                    this.currentState = message.state;
+                    this.updateVisualization();
+
+                    // Enable forward pass button after initialization
+                    document.getElementById('forward_pass').disabled = false;
+                    document.getElementById('step').disabled = false;
+                    // Enable token selection buttons after step completion (logits are cached)
+                    document.getElementById('select_tokens').disabled = false;
+                    document.getElementById('auto_select').disabled = false;
+
+                    if (message.is_complete) {
+                        this.stopAutoStepping();
+                        this.showGenerationComplete();
+                    }
+                } else if (message.type === 'forward_pass_result') {
+                    this.forwardPassResult = message.result;
+                    this.updateStatus('Forward pass complete', 'connected');
+                    this.showForwardPassResult();
+                } else if (message.type === 'reprocessed_probabilities_result') {
+                    // Update the UI with new probability data
+                    this.forwardPassResult.positions = message.result.positions;
+                    this.updateTokenGrid(this.forwardPassResult.positions);
+                    this.updateStatus('Probability settings applied successfully', 'connected');
+                } else if (message.type === 'model_load_result') {
+                    document.getElementById('load_model').disabled = false;
+
+                    if (message.success) {
+                        this.updateStatus('Model loaded successfully', 'connected');
+                        this.updateModelStatus(message.model_path, 'connected');
+                        document.getElementById('initialize').disabled = false;
+                        // Forward pass is enabled but requires initialization first
+                        document.getElementById('forward_pass').disabled = true;
+                        document.getElementById('model_path').value = message.model_path;
+                    } else {
+                        this.updateStatus(message.error, 'error');
+                        this.updateModelStatus('Failed to load', 'error');
+                    }
+                } else if (message.type === 'model_status') {
+                    if (message.is_loaded) {
+                        this.updateModelStatus(message.model_path, 'connected');
+                        document.getElementById('initialize').disabled = false;
+                        // Forward pass requires initialization first
+                        document.getElementById('forward_pass').disabled = true;
+                        document.getElementById('model_path').value = message.model_path;
+                        this.updateStatus('Connected to server - Model ready', 'connected');
+                    } else {
+                        this.updateModelStatus('Not loaded', '');
+                        document.getElementById('initialize').disabled = true;
+                        document.getElementById('forward_pass').disabled = true;
+                    }
+                } else if (message.type === 'error') {
+                    this.updateStatus(message.message, 'error');
+                }
+            }
+
+            enableSection(sectionId) {
+                const section = document.getElementById(sectionId);
+                if (section) {
+                    section.classList.remove('disabled');
+                }
+            }
+
+            disableSection(sectionId) {
+                const section = document.getElementById(sectionId);
+                if (section) {
+                    section.classList.add('disabled');
+                }
+            }
+
+            resetSectionsForNewModel() {
+                // Disable sections that require forward pass
+                this.disableSection('probability_processing');
+                this.disableSection('token_selection');
+            }
+
+            toggleGumbelTemperature() {
+                const checkbox = document.getElementById('apply_gumbel_noise');
+                const temperatureInput = document.getElementById('gumbel_temperature');
+                temperatureInput.disabled = !checkbox.checked;
+
+                // If unchecked, reset to 0
+                if (!checkbox.checked) {
+                    temperatureInput.value = '0.0';
+                }
+            }
+
+            applyProbabilitySettings() {
+                if (!this.forwardPassResult) {
+                    this.updateStatus('Please run a forward pass first', 'error');
+                    return;
+                }
+
+                if (!this.forwardPassResult.raw_logits) {
+                    this.updateStatus('No logits available for reprocessing', 'error');
+                    return;
+                }
+
+                // Get current settings with validation
+                const settings = {
+                    softmax_temperature: Math.max(0.1, parseFloat(document.getElementById('softmax_temperature').value) || 1.0),
+                    apply_gumbel_noise: document.getElementById('apply_gumbel_noise').checked,
+                    gumbel_temperature: parseFloat(document.getElementById('gumbel_temperature').value) || 0.0,
+                    top_k: Math.max(1, Math.min(100, parseInt(document.getElementById('top_k').value) || 10)),
+                    top_p: Math.max(0.01, Math.min(1.0, parseFloat(document.getElementById('top_p').value) || 1.0))
+                };
+
+                this.updateStatus('Applying probability settings...', '');
+
+                try {
+                    // Send request to reprocess probabilities with new settings
+                    this.ws.send(JSON.stringify({
+                        type: 'reprocess_probabilities',
+                        tokens: this.forwardPassResult.tokens,
+                        raw_logits: this.forwardPassResult.raw_logits,
+                        settings: settings
+                    }));
+                } catch (error) {
+                    console.error('Error sending reprocess request:', error);
+                    this.updateStatus('Error sending request: ' + error.message, 'error');
+                }
+            }
+
+            showForwardPassResult() {
+                document.getElementById('visualization').style.display = 'block';
+                document.getElementById('visualization').className = 'visualization forward-pass-mode';
+
+                // Enable the probability processing and token selection sections
+                this.enableSection('probability_processing');
+                this.enableSection('token_selection');
+
+                // Enable the apply probability settings button
+                document.getElementById('apply_probability_settings').disabled = false;
+
+                // Hide step controls in forward pass mode
+                document.querySelector('.step-info').style.display = 'none';
+
+                this.updateTokenGrid(this.forwardPassResult.positions);
+            }
+
+            updateVisualization() {
+                if (!this.currentState) return;
+
+                document.getElementById('visualization').className = 'visualization';
+                document.querySelector('.step-info').style.display = 'flex';
+
+                // Update step info
+                document.getElementById('current_step').textContent = this.currentState.step;
+                document.getElementById('current_block').textContent = this.currentState.block;
+                document.getElementById('rewind_step').max = this.currentState.step;
+
+                // Enable controls
+                document.getElementById('step').disabled = false;
+                document.getElementById('auto_select').disabled = false;
+                document.getElementById('rewind').disabled = this.currentState.step === 0;
+                document.getElementById('visualization').style.display = 'block';
+
+                // Update token grid
+                this.updateTokenGrid(this.currentState.positions);
+
+                this.updateStatus(`Step ${this.currentState.step}, Block ${this.currentState.block}`, 'connected');
+            }
+
+            trackNewlyDecoded(oldState, newState) {
+                if (!oldState || !newState || !oldState.positions || !newState.positions) return;
+
+                // Find positions that were masked but are now decoded
+                for (let i = 0; i < Math.min(oldState.positions.length, newState.positions.length); i++) {
+                    const oldPos = oldState.positions[i];
+                    const newPos = newState.positions[i];
+
+                    if (oldPos.is_masked && !newPos.is_masked &&
+                        oldPos.current_token_id !== newPos.current_token_id) {
+                        // This position was newly decoded
+                        this.recentlySelected.add(newPos.position);
+
+                        // Clear the highlight after animation
+                        setTimeout(() => {
+                            this.recentlySelected.delete(newPos.position);
+                            // Refresh with current state positions since this is for generation steps
+                            if (this.currentState) {
+                                this.updateTokenGrid(this.currentState.positions);
+                            }
+                        }, 2000);
+                    }
+                }
+            }
+
+            updateTokenGrid(positions = null) {
+                const tokenGrid = document.getElementById('token_grid');
+                tokenGrid.innerHTML = '';
+
+                // Determine which positions to show - prioritize explicit parameter, then context-appropriate default
+                let positionsToShow;
+                if (positions) {
+                    positionsToShow = positions;
+                } else if (this.isForwardPassMode && this.forwardPassResult) {
+                    positionsToShow = this.forwardPassResult.positions;
+                } else if (this.currentState) {
+                    positionsToShow = this.currentState.positions;
+                } else {
+                    positionsToShow = [];
+                }
+
+                const promptLength = this.currentState?.prompt_length || (this.forwardPassResult?.prompt_length);
+
+                positionsToShow.forEach((position, idx) => {
+                    const row = document.createElement('div');
+
+                    // Determine token state
+                    const isMasked = position.is_masked || position.current_token === '[MASK]';
+                    const isPrompt = position.position < promptLength;
+                    const isSelected = this.manualSelections[position.position] !== undefined;
+                    const isRecentlySelected = this.recentlySelected && this.recentlySelected.has(position.position);
+
+                    // Build CSS classes
+                    let classes = ['token-row'];
+                    if (position.is_block_boundary) classes.push('block-boundary');
+                    if (isPrompt) classes.push('prompt');
+                    if (isSelected) classes.push('selected');
+                    if (isRecentlySelected) classes.push('recently-selected');
+
+                    row.className = classes.join(' ');
+
+                    // Position info
+                    const posInfo = document.createElement('div');
+                    posInfo.className = 'position-info';
+
+                    // Determine token type label
+                    let typeLabel = '';
+                    if (isPrompt) typeLabel = '(prompt)';
+                    else if (isMasked) typeLabel = '(masked)';
+                    else typeLabel = '(generated)';
+
+                    // Build token CSS classes
+                    let tokenClasses = ['current-token'];
+                    if (isMasked) tokenClasses.push('masked');
+                    if (isPrompt) tokenClasses.push('prompt');
+                    if (isSelected) tokenClasses.push('selected');
+                    if (isRecentlySelected) tokenClasses.push('recently-selected');
+
+                    posInfo.innerHTML = `
+                        <div class="position-number">Pos ${position.position} ${typeLabel}</div>
+                        <div class="${tokenClasses.join(' ')}">${position.current_token}</div>
+                    `;
+                    row.appendChild(posInfo);
+
+                    // Candidates
+                    const candidates = document.createElement('div');
+                    candidates.className = 'candidates';
+
+                    // Apply max candidates limit
+                    const maxDisplayCandidates = parseInt(document.getElementById('max_display_candidates').value) || 0;
+                    const candidatesToShow = maxDisplayCandidates > 0 && position.candidates.length > maxDisplayCandidates
+                        ? position.candidates.slice(0, maxDisplayCandidates)
+                        : position.candidates;
+
+                    const originalCandidateCount = position.candidates.length;
+
+                    candidatesToShow.forEach((candidate, candidateIdx) => {
+                        const candidateEl = document.createElement('div');
+
+                        // Check if this candidate is the currently selected one for this position
+                        const isThisCandidateSelected = isSelected &&
+                            this.manualSelections[position.position] === candidate.token_id;
+
+                        candidateEl.className = `token-candidate ${isThisCandidateSelected ? 'selected' : ''}`;
+
+                        // Don't override background for selected candidates (CSS will handle it)
+                        if (!isThisCandidateSelected) {
+                            candidateEl.style.background = this.getTokenBackground(candidate.prob);
+                        }
+
+                        candidateEl.innerHTML = `
+                            <div class="token-text">${candidate.token}</div>
+                            <div class="token-prob">${(candidate.prob * 100).toFixed(1)}%</div>
+                            <div class="token-logit">${candidate.logit.toFixed(2)}</div>
+                        `;
+
+                        candidateEl.addEventListener('click', () => {
+                            this.selectToken(position.position, candidate.token_id, candidate.token);
+                        });
+
+                        candidates.appendChild(candidateEl);
+                    });
+
+                    // Add truncation notice if candidates were limited
+                    if (maxDisplayCandidates > 0 && originalCandidateCount > maxDisplayCandidates) {
+                        const truncationEl = document.createElement('div');
+                        truncationEl.className = 'candidate-truncation';
+                        truncationEl.innerHTML = `
+                            <div class="truncation-indicator">
+                                <span class="truncation-text">+${originalCandidateCount - maxDisplayCandidates} more</span>
+                                <span class="truncation-hint">Increase max candidates to see all</span>
+                            </div>
+                        `;
+                        candidates.appendChild(truncationEl);
+                    }
+
+                    row.appendChild(candidates);
+                    tokenGrid.appendChild(row);
+                });
+            }
+
+            getTokenBackground(prob) {
+                const intensity = Math.min(prob * 2, 1);
+                const r = Math.floor(74 * intensity);
+                const g = Math.floor(158 * intensity);
+                const b = Math.floor(255 * intensity);
+                return `rgba(${r}, ${g}, ${b}, 0.3)`;
+            }
+
+            selectToken(position, tokenId, tokenText) {
+                // If this position already has a selection and it's the same token, deselect it
+                if (this.manualSelections[position] === tokenId) {
+                    delete this.manualSelections[position];
+                    this.recentlySelected.delete(position);
+                } else {
+                    // Select this token (potentially replacing a previous selection)
+                    this.manualSelections[position] = tokenId;
+                    this.recentlySelected.add(position);
+
+                    // Clear recently selected after animation duration
+                    setTimeout(() => {
+                        this.recentlySelected.delete(position);
+                        // Refresh with the appropriate data
+                        if (this.isForwardPassMode && this.forwardPassResult) {
+                            this.updateTokenGrid(this.forwardPassResult.positions);
+                        } else if (this.currentState) {
+                            this.updateTokenGrid(this.currentState.positions);
+                        }
+                    }, 1500);
+                }
+                this.updateManualSelections();
+
+                // Refresh the token grid with the appropriate data
+                if (this.isForwardPassMode && this.forwardPassResult) {
+                    this.updateTokenGrid(this.forwardPassResult.positions);
+                } else if (this.currentState) {
+                    this.updateTokenGrid(this.currentState.positions);
+                }
+            }
+
+            updateManualSelections() {
+                const container = document.getElementById('manual_selections');
+                const list = document.getElementById('selections_list');
+
+                if (Object.keys(this.manualSelections).length === 0) {
+                    container.style.display = 'none';
+                    return;
+                }
+
+                container.style.display = 'block';
+                list.innerHTML = '';
+
+                Object.entries(this.manualSelections).forEach(([position, tokenId]) => {
+                    const item = document.createElement('div');
+                    item.className = 'selection-item';
+
+                    // Find token text
+                    let tokenText = `Token ${tokenId}`;
+                    if (this.currentState && this.currentState.positions[position]) {
+                        const candidate = this.currentState.positions[position].candidates.find(c => c.token_id === tokenId);
+                        if (candidate) {
+                            tokenText = candidate.token;
+                        }
+                    }
+
+                    item.innerHTML = `
+                        <span>Pos ${position}: ${tokenText}</span>
+                        <button class="selection-remove" onclick="viz.removeSelection(${position})">×</button>
+                    `;
+
+                    list.appendChild(item);
+                });
+            }
+
+            removeSelection(position) {
+                delete this.manualSelections[position];
+                this.updateManualSelections();
+            }
+
+            showGenerationComplete() {
+                const visualization = document.getElementById('visualization');
+                const completeDiv = document.createElement('div');
+                completeDiv.className = 'generation-complete';
+                completeDiv.innerHTML = '<h3>Generation Complete!</h3><p>All tokens have been generated.</p>';
+                visualization.insertBefore(completeDiv, visualization.firstChild);
+            }
+        }
+
+        // Initialize the visualizer
+        const viz = new DiffusionVisualizer();
+    </script>
+</body>
+</html>
