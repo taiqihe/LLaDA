@@ -1,15 +1,12 @@
 import json
-import sys
 import os
 import argparse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from config import DEFAULT_HOST, DEFAULT_PORT
+from config import DEFAULT_CONFIG, MASK_ID
 from diffusion_model import DiffusionModel
-from generation_engine import GenerationEngine
+from token_tracker import TokenTracker
 from websocket_handlers import WebSocketMessageHandler
 
 
@@ -19,10 +16,10 @@ app = FastAPI()
 class DiffusionVisualizer:
     """Main visualizer class that coordinates all components."""
 
-    def __init__(self, model_path: str = None):
-        self.diffusion_model = DiffusionModel()
-        self.generation_engine = GenerationEngine()
-        self.message_handler = WebSocketMessageHandler(self.diffusion_model, self.generation_engine)
+    def __init__(self, model_path: str = None, config=DEFAULT_CONFIG):
+        self.diffusion_model = DiffusionModel(device=config["device"], mask_id=MASK_ID)
+        self.token_tracker = TokenTracker(device=config["device"], mask_id=MASK_ID)
+        self.message_handler = WebSocketMessageHandler(self.diffusion_model, self.token_tracker, config)
 
         if model_path:
             self.diffusion_model.load_model(model_path)
@@ -82,8 +79,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Diffusion Language Model Visualizer")
     parser.add_argument("--model-path", "-m", type=str, help="Path to the model (local path or HuggingFace model ID)")
-    parser.add_argument("--host", default=DEFAULT_HOST, help="Host to bind to")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port to bind to")
+    parser.add_argument("--host", default=DEFAULT_CONFIG["host"], help="Host to bind to")
+    parser.add_argument("--port", type=int, default=DEFAULT_CONFIG["port"], help="Port to bind to")
 
     args = parser.parse_args()
 

@@ -3,14 +3,13 @@ import torch.nn.functional as F
 import traceback
 from typing import Optional, List, Dict
 
-from config import DEFAULT_MASK_ID, DEFAULT_DEVICE, DEFAULT_DTYPE
 from probability_processor import ProbabilityProcessor
 
 
 class ModelLoader:
     """Handles model loading and validation."""
 
-    def __init__(self, device: str = DEFAULT_DEVICE):
+    def __init__(self, device: str):
         self.device = device if torch.cuda.is_available() else "cpu"
 
     def load_model(self, model_path: str):
@@ -39,7 +38,7 @@ class ModelLoader:
 class DiffusionModel:
     """Core diffusion model operations and forward pass logic."""
 
-    def __init__(self, device: str = DEFAULT_DEVICE, mask_id: int = DEFAULT_MASK_ID):
+    def __init__(self, device: str, mask_id: int):
         self.device = device if torch.cuda.is_available() else "cpu"
         self.mask_id = mask_id
         self.model = None
