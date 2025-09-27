@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 
 @dataclass
@@ -29,15 +29,6 @@ class GenerationState:
     block_start: int
     block_length: int
     selected_positions: Dict[int, int]  # position -> token_id
-
-
-# @dataclass
-# class GenerationParams:
-#     tokens_to_select: int = 1
-#     block_length: int = 32
-#     remasking_strategy: str = "low_confidence"
-#     top_k: int = 50
-#     manual_selections: Optional[Dict[int, int]] = None
 
 
 @dataclass

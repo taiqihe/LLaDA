@@ -4,7 +4,7 @@ from typing import Dict, Any
 from dataclasses import asdict
 from fastapi import WebSocket
 
-from models import MessageTypes, GenerationParams
+from models import MessageTypes
 from diffusion_model import DiffusionModel
 from token_tracker import TokenTracker
 
@@ -76,57 +76,148 @@ class WebSocketMessageHandler:
 
     async def _handle_initialize(self, websocket: WebSocket, message: Dict[str, Any]):
         """Handle generation initialization"""
-        prompt = message["prompt"]
-        gen_length = message.get("gen_length", self.config["gen_length"])
-        block_length = message.get("block_length", self.config["block_length"])
+        try:
+            # Validate required parameters
+            prompt = message.get("prompt")
+            if not prompt or not isinstance(prompt, str):
+                await self._send_error(websocket, "Invalid prompt: must be a non-empty string.")
+                return
 
-        # Tokenize prompt
-        prompt_tokens = self.diffusion_model.tokenize_prompt(prompt)
+            gen_length = message.get("gen_length", self.config["gen_length"])
+            if not isinstance(gen_length, int) or gen_length < 1 or gen_length > 1024:
+                await self._send_error(websocket, "Invalid gen_length: must be an integer between 1 and 1024.")
+                return
 
-        # Initialize generation
-        state = self.generation_engine.initialize_generation(
-            prompt_tokens, gen_length, block_length, self.diffusion_model.tokenizer
-        )
+            block_length = message.get("block_length", self.config["block_length"])
+            if not isinstance(block_length, int) or block_length < 1 or block_length > gen_length:
+                await self._send_error(websocket, "Invalid block_length: must be an integer between 1 and gen_length.")
+                return
 
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": MessageTypes.STATE_UPDATE,
-                    "state": asdict(state),
-                }
+            # Check if model is loaded
+            if not self.diffusion_model.is_model_loaded():
+                await self._send_error(websocket, "No model loaded. Please load a model first.")
+                return
+
+            # Tokenize prompt
+            prompt_tokens = self.diffusion_model.tokenize_prompt(prompt)
+
+            # Initialize generation
+            state = self.token_tracker.initialize_generation(
+                prompt_tokens, gen_length, block_length, self.diffusion_model.tokenizer
             )
-        )
+
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": MessageTypes.STATE_UPDATE,
+                        "state": asdict(state),
+                    }
+                )
+            )
+        except Exception as e:
+            await self._send_error(websocket, f"Error initializing generation: {str(e)}")
 
     async def _handle_auto_select(self, websocket: WebSocket, message: Dict[str, Any]):
-        """Handle generation step"""
-        probs = self.diffusion_model.get_probabilities()
-        params = {
-            "tokens_to_select": message.get("tokens_to_select", self.config["tokens_to_select"]),
-            "block_length": message.get("block_length", self.config["block_length"]),
-            "strategy": message.get("remasking", self.config["remasking"]),
-            "selection": message.get("selection", self.config["selection"]),
-        }
+        """Handle automatic token selection - placeholder implementation"""
+        try:
+            # Get current generation state
+            if not self.token_tracker.current_state:
+                await self._send_error(websocket, "No generation initialized. Please initialize first.")
+                return
 
-        tokens = self.token_tracker.auto_select(probs, **params)
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": MessageTypes.TOKEN_SELECTIONS,
-                    "tokens": tokens,
-                }
+            # Validate required parameters
+            tokens_to_select = message.get("tokens_to_select", self.config["tokens_to_select"])
+            if not isinstance(tokens_to_select, int) or tokens_to_select < 1:
+                await self._send_error(websocket, "Invalid tokens_to_select: must be a positive integer.")
+                return
+
+            # For now, return a placeholder response until full implementation
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": MessageTypes.STATE_UPDATE,
+                        "message": f"Auto-select functionality is not yet fully implemented. Requested {tokens_to_select} tokens. Please use manual selection or forward pass first.",
+                    }
+                )
             )
-        )
+        except Exception as e:
+            await self._send_error(websocket, f"Error in auto selection: {str(e)}")
 
     async def _handle_apply_selection(self, websocket: WebSocket, message: Dict[str, Any]):
-        pass
+        """Handle applying token selections to the generation state"""
+        try:
+            # Get current generation state
+            if not self.token_tracker.current_state:
+                await self._send_error(websocket, "No generation initialized. Please initialize first.")
+                return
+
+            # Get selections from message
+            selections = message.get("selections", {})
+            if not selections or not isinstance(selections, dict):
+                await self._send_error(websocket, "No valid selections provided. Must be a dictionary of position: token_id.")
+                return
+
+            # Validate selections format
+            try:
+                validated_selections = {}
+                for pos, token_id in selections.items():
+                    pos_int = int(pos)
+                    token_id_int = int(token_id)
+                    if pos_int < 0 or token_id_int < 0:
+                        await self._send_error(websocket, f"Invalid selection: position {pos_int} and token_id {token_id_int} must be non-negative.")
+                        return
+                    validated_selections[pos_int] = token_id_int
+            except (ValueError, TypeError):
+                await self._send_error(websocket, "Invalid selections format. Positions and token IDs must be integers.")
+                return
+
+            # Apply selections
+            updated_state = self.token_tracker.apply_selections(validated_selections, self.diffusion_model.tokenizer)
+
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": MessageTypes.STATE_UPDATE,
+                        "state": asdict(updated_state),
+                    }
+                )
+            )
+        except Exception as e:
+            await self._send_error(websocket, f"Error applying selections: {str(e)}")
 
     async def _handle_forward_pass(self, websocket: WebSocket, message: Dict[str, Any]):
         """Handle forward pass with provided tokens"""
-        tokens = message["tokens"]
-        top_k = message.get("top_k", 10)
+        try:
+            # Validate tokens
+            tokens = message.get("tokens")
+            if not tokens or not isinstance(tokens, list):
+                await self._send_error(websocket, "Invalid tokens: must be a non-empty list of token IDs.")
+                return
 
-        result = self.diffusion_model.forward_pass_with_prompt(tokens, top_k)
-        await websocket.send_text(json.dumps({"type": MessageTypes.FORWARD_PASS_RESULT, "result": result}))
+            # Validate token IDs
+            try:
+                validated_tokens = [int(t) for t in tokens]
+                if any(t < 0 for t in validated_tokens):
+                    await self._send_error(websocket, "Invalid tokens: all token IDs must be non-negative integers.")
+                    return
+            except (ValueError, TypeError):
+                await self._send_error(websocket, "Invalid tokens: all items must be integers.")
+                return
+
+            top_k = message.get("top_k", 10)
+            if not isinstance(top_k, int) or top_k < 1 or top_k > 50000:
+                await self._send_error(websocket, "Invalid top_k: must be an integer between 1 and 50000.")
+                return
+
+            # Check if model is loaded
+            if not self.diffusion_model.is_model_loaded():
+                await self._send_error(websocket, "No model loaded. Please load a model first.")
+                return
+
+            result = self.diffusion_model.forward_pass_with_prompt(validated_tokens, top_k)
+            await websocket.send_text(json.dumps({"type": MessageTypes.FORWARD_PASS_RESULT, "result": result}))
+        except Exception as e:
+            await self._send_error(websocket, f"Error in forward pass: {str(e)}")
 
     async def _handle_reprocess_probabilities(self, websocket: WebSocket, message: Dict[str, Any]):
         """Handle probability reprocessing with size limits"""
@@ -157,17 +248,32 @@ class WebSocketMessageHandler:
 
     async def _handle_rewind(self, websocket: WebSocket, message: Dict[str, Any]):
         """Handle generation rewind"""
-        step = message["step"]
-        state = self.generation_engine.rewind_to_step(step)
-        if state:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": MessageTypes.STATE_UPDATE,
-                        "state": asdict(state),
-                    }
+        try:
+            # Validate step parameter
+            step = message.get("step")
+            if step is None or not isinstance(step, int) or step < 0:
+                await self._send_error(websocket, "Invalid step: must be a non-negative integer.")
+                return
+
+            # Check if generation is initialized
+            if not self.token_tracker.current_state:
+                await self._send_error(websocket, "No generation initialized. Please initialize first.")
+                return
+
+            state = self.token_tracker.rewind_to_step(step)
+            if state:
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": MessageTypes.STATE_UPDATE,
+                            "state": asdict(state),
+                        }
+                    )
                 )
-            )
+            else:
+                await self._send_error(websocket, f"Cannot rewind to step {step}. Step not found in cache.")
+        except Exception as e:
+            await self._send_error(websocket, f"Error rewinding: {str(e)}")
 
     async def _send_error(self, websocket: WebSocket, error_message: str):
         """Send error message to client"""

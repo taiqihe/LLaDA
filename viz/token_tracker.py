@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from models import GenerationState, PositionData
 
@@ -121,23 +121,32 @@ class TokenTracker:
 
     def apply_selections(
         self,
-        tokenizer,
-    ) -> Tuple[GenerationState, bool]:
+        selections: Dict[int, int],
+        tokenizer=None,
+    ) -> GenerationState:
         """Step the generation process"""
         if not self.current_state:
             raise ValueError("No generation initialized")
 
-        if len(self.current_state.selected_positions) == 0:
-            raise ValueError("Must have at least one token selected")
+        if not selections:
+            raise ValueError("Must provide selections")
 
-        tokens = self.current_state.token_ids
-        for pos, tid in self.current_state.selected_positions.items():
-            tokens[pos] = tid
+        # Apply the provided selections to current state
+        self.current_state.selected_positions.update(selections)
+
+        tokens = self.current_state.token_ids.copy()
+        for pos, tid in selections.items():
+            if 0 <= pos < len(tokens):
+                tokens[pos] = tid
 
         # Update state
         self.current_state.step += 1
         self.current_state.token_ids = tokens.tolist()
-        self.current_state.tokens = ([tokenizer.decode([t], skip_special_tokens=False) for t in tokens],)
+        if tokenizer:
+            self.current_state.tokens = [tokenizer.decode([t], skip_special_tokens=False) for t in tokens]
+        else:
+            # If no tokenizer, keep existing tokens or use string representation
+            self.current_state.tokens = [str(t) for t in tokens]
 
         # Cache state
         self.state_cache[self.current_state.step] = self.current_state
