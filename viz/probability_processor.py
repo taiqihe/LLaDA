@@ -1,11 +1,9 @@
 import torch
 import torch.nn.functional as F
-import numpy as np
-import math
 from typing import List, Dict, Tuple
 
-from config import EPSILON, MIN_TEMPERATURE, MIN_TOP_P
-from models import ProbabilitySettings, TokenCandidate
+from config import EPSILON, MIN_TEMPERATURE
+from models import TokenCandidate
 
 
 class ProbabilityProcessor:
@@ -78,6 +76,65 @@ class ProbabilityProcessor:
         filtered_probs = filtered_probs / prob_sums
 
         return filtered_probs
+
+    def apply_token_restrictions(self, probs: torch.Tensor, top_k: int, top_p: float) -> Tuple[torch.Tensor, int]:
+        """Apply both top_k and top_p restrictions, returning the more restrictive count"""
+        # Apply top_p filtering first
+        filtered_probs = self.apply_top_p_filtering(probs, top_p)
+
+        # Count how many tokens remain after top_p filtering
+        top_p_count = (filtered_probs > 0).sum(dim=-1)
+
+        # The actual restriction is the minimum of top_k and top_p count
+        actual_top_k = torch.minimum(torch.tensor(top_k), top_p_count)
+
+        return filtered_probs, actual_top_k.item()
+
+    def get_token_candidates_with_restrictions(
+        self,
+        logits: torch.Tensor,
+        probs: torch.Tensor,
+        visual_top_k: int,
+        actual_top_k: int,
+        top_p: float,
+        tokenizer
+    ) -> Tuple[List[TokenCandidate], int]:
+        """Get token candidates with both visual and actual restrictions"""
+        # Check for valid probabilities
+        if torch.isnan(probs).any() or torch.isinf(probs).any():
+            return [], 0
+
+        # Apply restrictions to get actual constraints
+        _, actual_restricted_k = self.apply_token_restrictions(probs, actual_top_k, top_p)
+
+        # For visual display, use the larger of visual_top_k or actual_restricted_k
+        display_k = max(visual_top_k, actual_restricted_k)
+        valid_k = min(display_k, probs.shape[0])
+
+        # Get top candidates for display
+        top_k_indices = torch.topk(probs, k=valid_k).indices
+
+        candidates = []
+        for rank, idx in enumerate(top_k_indices):
+            token_id = idx.item()
+            try:
+                token_text = tokenizer.decode([token_id])
+            except:
+                token_text = f"<token_{token_id}>"
+
+            # Mark whether this token is within actual restrictions
+            is_in_actual = rank < actual_restricted_k
+
+            candidates.append(TokenCandidate(
+                token=token_text,
+                token_id=token_id,
+                logit=float(logits[idx].item()),
+                prob=float(probs[idx].item()),
+                rank=rank,
+                is_in_actual=is_in_actual
+            ))
+
+        return candidates, actual_restricted_k
 
     def get_token_candidates(
         self,

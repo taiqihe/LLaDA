@@ -3,6 +3,7 @@ import numpy as np
 from typing import Dict, List, Optional
 
 from models import GenerationState, PositionData
+from logger_config import token_tracker_logger
 
 
 class TokenSelector:
@@ -30,11 +31,11 @@ class TokenSelector:
 
     def _ranking_low_confidence(self, probs: torch.Tensor) -> torch.Tensor:
         """Remask tokens with low confidence (low probability)"""
-        return probs.max(dim=-1)
+        return probs.max(dim=-1)[0]  # Return only values, not indices
 
     def _ranking_high_confidence(self, probs: torch.Tensor) -> torch.Tensor:
         """Remask tokens with high confidence (high probability) - inverted"""
-        return 1.0 - probs.max(dim=-1)
+        return 1.0 - probs.max(dim=-1)[0]  # Return only values, not indices
 
     def _ranking_low_entropy(self, probs: torch.Tensor) -> torch.Tensor:
         """Remask positions with low entropy (more certain distributions)"""
@@ -87,6 +88,8 @@ class TokenTracker:
         """Initialize generation state"""
         if tokenizer is None:
             raise ValueError("Tokenizer is required for generation initialization")
+
+        token_tracker_logger.info(f"Initializing generation: prompt_length={len(prompt_tokens)}, gen_length={gen_length}, block_length={block_length}")
 
         x = np.full(len(prompt_tokens) + gen_length, self.mask_id, dtype=np.int)
         x[: len(prompt_tokens)] = prompt_tokens
@@ -159,10 +162,15 @@ class TokenTracker:
         x0,
         strategy="low_confidence",
         max_tokens=1,
-        selection_method="constant",
-        selection_param=None,
+        selection_method="constant",  # Not used yet, for future implementation
+        selection_param=None,  # Not used yet, for future implementation
         block_length=None,
     ):
+        if not isinstance(probabilities, torch.Tensor):
+            probabilities = torch.tensor(probabilities).to(self.device)
+        if not isinstance(x0, torch.Tensor):
+            x0 = torch.tensor(x0).to(self.device)
+
         token_ids = self.current_state.token_ids
         if len(probabilities) != len(token_ids) or len(x0) != len(token_ids):
             raise ValueError("Probabilities and x0 should be the same length as tokens")
@@ -171,17 +179,47 @@ class TokenTracker:
             self.current_state.block_length = block_length
 
         start = self.current_state.block_start
-        end = start + self.current_state.block_length
-        tokens = torch.tensor(token_ids).to(self.device)
-        if torch.all(tokens[start:end] != self.mask_id):
-            start = end
-            end = start + self.current_state.block_length
+        end = min(start + self.current_state.block_length, len(token_ids))
 
-        prob_window = self.token_selector.apply_ranking_strategy(probabilities[start:end], strategy)
-        selected = self.token_selector.select_tokens(prob_window, max_tokens=max_tokens, strategy=selection_method, threshold=selection_param)
-        candidates = prob_window.argmax(dim=-1)
-        
-        selected_tokens = {i+start: x0[i+start, candidates[i]] for i in selected}
+        tokens = torch.tensor(token_ids).to(self.device)
+
+        # Check if current block has any masked tokens
+        masked_in_block = tokens[start:end] == self.mask_id
+        if not masked_in_block.any():
+            # Move to next block if current block is complete
+            start = end
+            end = min(start + self.current_state.block_length, len(token_ids))
+            masked_in_block = tokens[start:end] == self.mask_id
+            self.current_state.block_start = start
+
+        if not masked_in_block.any():
+            # No more masked tokens
+            return {}
+
+        # Get probability scores for ranking using the specified strategy
+        block_probs = probabilities[start:end]
+        confidence_scores = self.token_selector.apply_ranking_strategy(block_probs, strategy)
+
+        # Only consider masked positions for selection
+        confidence_scores = torch.where(masked_in_block, confidence_scores, torch.tensor(-float('inf')))
+
+        # Select top tokens based on confidence scores
+        if max_tokens > masked_in_block.sum():
+            max_tokens = masked_in_block.sum().item()
+
+        if max_tokens == 0:
+            return {}
+
+        # Get indices of top tokens within the block
+        _, top_indices = torch.topk(confidence_scores, max_tokens)
+
+        # Convert block-relative indices to absolute positions and get predicted tokens
+        selected_tokens = {}
+        for idx in top_indices:
+            absolute_pos = start + idx.item()
+            predicted_token = x0[absolute_pos].item()
+            selected_tokens[absolute_pos] = predicted_token
+
         return selected_tokens
 
 

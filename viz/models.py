@@ -9,6 +9,7 @@ class TokenCandidate:
     logit: float
     prob: float
     rank: int
+    is_in_actual: bool = True  # Whether this token is within actual top_k/top_p restrictions
 
 
 @dataclass

@@ -24,7 +24,8 @@ DEFAULT_CONFIG = {
     "tokens_to_select": 1,
     "remasking": "low_confidence",
     "selection": "constant",
-    "top_k": 10,
+    "visual_top_k": 20,  # Number of tokens to show in UI
+    "actual_top_k": 10,  # Number of tokens for actual selection
     "top_p": 1.0,
     "softmax_temperature": 1.0,
     "gumbel_temperature": 0.0,
