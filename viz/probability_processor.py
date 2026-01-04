@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn.functional as F
 from typing import List, Dict, Tuple
@@ -240,7 +241,8 @@ class ProbabilityProcessor:
                 })
 
             return {
-                'positions': positions_data
+                'positions': positions_data,
+                'settings_applied': settings
             }
 
         except Exception as e:

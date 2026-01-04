@@ -1,3 +1,4 @@
+import copy
 import torch
 import numpy as np
 from typing import Dict, List, Optional
@@ -82,6 +83,10 @@ class TokenTracker:
         self.current_state = None
         self.token_selector = TokenSelector(mask_id)
 
+    def is_initialized(self) -> bool:
+        """Check if generation has been initialized"""
+        return self.current_state is not None
+
     def initialize_generation(
         self, prompt_tokens: List[int], gen_length: int = 128, block_length: int = 32, tokenizer=None
     ) -> GenerationState:
@@ -91,8 +96,11 @@ class TokenTracker:
 
         token_tracker_logger.info(f"Initializing generation: prompt_length={len(prompt_tokens)}, gen_length={gen_length}, block_length={block_length}")
 
-        x = np.full(len(prompt_tokens) + gen_length, self.mask_id, dtype=np.int)
+        x = np.full(len(prompt_tokens) + gen_length, self.mask_id, dtype=np.int64)
         x[: len(prompt_tokens)] = prompt_tokens
+
+        # Generate token strings
+        tokens = [tokenizer.decode([t], skip_special_tokens=False) for t in x]
 
         positions = []
         for i in range(len(x)):
@@ -101,6 +109,8 @@ class TokenTracker:
 
             positions.append(
                 PositionData(
+                    position=i,
+                    current_token=tokens[i],
                     is_prompt=not is_masked,
                     is_masked=is_masked,
                     is_block_boundary=is_block_boundary,
@@ -111,7 +121,7 @@ class TokenTracker:
         self.current_state = GenerationState(
             step=0,
             token_ids=x.tolist(),
-            tokens=[tokenizer.decode([t], skip_special_tokens=False) for t in x],
+            tokens=tokens,
             positions=positions,
             prompt_length=len(prompt_tokens),
             block_start=len(prompt_tokens),
@@ -119,7 +129,7 @@ class TokenTracker:
             selected_positions={},
         )
 
-        self.state_cache[0] = self.current_state
+        self.state_cache[0] = copy.deepcopy(self.current_state)
         return self.current_state
 
     def apply_selections(
@@ -144,15 +154,20 @@ class TokenTracker:
 
         # Update state
         self.current_state.step += 1
-        self.current_state.token_ids = tokens.tolist()
+        self.current_state.token_ids = tokens
         if tokenizer:
             self.current_state.tokens = [tokenizer.decode([t], skip_special_tokens=False) for t in tokens]
         else:
             # If no tokenizer, keep existing tokens or use string representation
             self.current_state.tokens = [str(t) for t in tokens]
 
+        # Update position current_token fields
+        for i, position in enumerate(self.current_state.positions):
+            if i < len(self.current_state.tokens):
+                position.current_token = self.current_state.tokens[i]
+
         # Cache state
-        self.state_cache[self.current_state.step] = self.current_state
+        self.state_cache[self.current_state.step] = copy.deepcopy(self.current_state)
 
         return self.current_state
 
@@ -226,6 +241,6 @@ class TokenTracker:
     def rewind_to_step(self, step: int) -> Optional[GenerationState]:
         """Rewind generation to a previous step"""
         if step in self.state_cache:
-            self.current_state = self.state_cache[step]
+            self.current_state = copy.deepcopy(self.state_cache[step])
             return self.current_state
         return None

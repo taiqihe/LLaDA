@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import traceback
 from typing import Optional, List, Dict
+from transformers import AutoModel, AutoTokenizer
 
 from probability_processor import ProbabilityProcessor
 from logger_config import diffusion_logger

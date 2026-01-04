@@ -348,6 +348,37 @@
             border: 1px solid white;
         }
 
+        .token-candidate.not-in-actual {
+            opacity: 0.6;
+            border: 1px dashed #666 !important;
+        }
+
+        .token-candidate.not-in-actual:hover {
+            opacity: 0.8;
+            border-color: #888 !important;
+        }
+
+        .token-candidate.in-actual {
+            border: 1px solid #4a9eff;
+        }
+
+        .cached-indicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #ffd700;
+            color: #000;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            display: none;
+        }
+
+        .visualization.cached .cached-indicator {
+            display: block;
+        }
+
         .token-text {
             font-weight: bold;
             margin-bottom: 2px;
@@ -602,9 +633,14 @@
                     <h4>Sampling Controls</h4>
                     <div class="control-row">
                         <div class="control-group">
-                            <label>Top-K</label>
-                            <input type="number" id="top_k" value="10" min="1" max="100">
-                            <small>Only consider top K tokens</small>
+                            <label>Visual Top-K</label>
+                            <input type="number" id="visual_top_k" value="20" min="1" max="100">
+                            <small>Number of candidates shown in UI</small>
+                        </div>
+                        <div class="control-group">
+                            <label>Actual Top-K</label>
+                            <input type="number" id="actual_top_k" value="10" min="1" max="100">
+                            <small>Number of candidates used for actual selection</small>
                         </div>
                         <div class="control-group">
                             <label>Top-P (Nucleus)</label>
@@ -621,33 +657,65 @@
 
             <!-- Token Selection Section (Hidden initially) -->
             <div class="control-section disabled" id="token_selection">
-                <h3>3. Token Selection & Remasking</h3>
-                <div class="control-row">
-                    <div class="control-group">
-                        <label>Remasking Strategy</label>
-                        <select id="remasking">
-                            <option value="low_confidence">Low Confidence</option>
-                            <option value="high_confidence">High Confidence</option>
-                            <option value="low_entropy">Low Entropy</option>
-                            <option value="high_entropy">High Entropy</option>
-                            <option value="random">Random</option>
-                        </select>
-                    </div>
+                <h3>3. Token Selection & Application</h3>
 
-                    <div class="control-group">
-                        <label>Block Length</label>
-                        <input type="number" id="block_length" value="32" min="1" max="128">
-                    </div>
+                <!-- Auto Selection Subsection -->
+                <div class="subsection">
+                    <h4>Auto Selection</h4>
+                    <div class="control-row">
+                        <div class="control-group">
+                            <label>Selection Strategy</label>
+                            <select id="selection_strategy">
+                                <option value="low_confidence">Low Confidence</option>
+                                <option value="high_confidence">High Confidence</option>
+                                <option value="low_entropy">Low Entropy</option>
+                                <option value="high_entropy">High Entropy</option>
+                                <option value="random">Random</option>
+                            </select>
+                        </div>
 
-                    <div class="control-group">
-                        <label>Tokens to Select</label>
-                        <input type="number" id="tokens_to_select" value="1" min="1" max="32">
-                        <small>Number of tokens to decode in each selection step</small>
-                    </div>
+                        <div class="control-group">
+                            <label>Max Tokens to Select</label>
+                            <input type="number" id="max_tokens" value="1" min="1" max="10">
+                            <small>Maximum tokens to select automatically</small>
+                        </div>
 
-                    <div class="button-group">
-                        <button class="btn secondary" id="select_tokens" disabled>Select Tokens</button>
-                        <button class="btn secondary" id="auto_select" disabled>Auto Select</button>
+                        <div class="button-group">
+                            <button class="btn secondary" id="auto_select_tokens" disabled>Auto Select Tokens</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Manual Selection Application -->
+                <div class="subsection">
+                    <h4>Apply Selections</h4>
+                    <div class="control-row">
+                        <div class="button-group">
+                            <button class="btn" id="apply_selections" disabled>Apply Selected Tokens</button>
+                            <button class="btn secondary" id="clear_selections" disabled>Clear All Selections</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Legacy Controls (kept for compatibility) -->
+                <div class="subsection">
+                    <h4>Legacy Generation Controls</h4>
+                    <div class="control-row">
+                        <div class="control-group">
+                            <label>Block Length</label>
+                            <input type="number" id="block_length" value="32" min="1" max="128">
+                        </div>
+
+                        <div class="control-group">
+                            <label>Tokens to Select</label>
+                            <input type="number" id="tokens_to_select" value="1" min="1" max="32">
+                            <small>Number of tokens to decode in each selection step</small>
+                        </div>
+
+                        <div class="button-group">
+                            <button class="btn secondary" id="select_tokens" disabled>Select Tokens</button>
+                            <button class="btn secondary" id="auto_select" disabled>Auto Select (Legacy)</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -667,6 +735,7 @@
         </div>
 
         <div class="visualization" id="visualization" style="display: none;">
+            <div class="cached-indicator">Using Cached Forward Pass</div>
             <div class="step-info">
                 <div>
                     <strong>Step:</strong> <span id="current_step">0</span> |
@@ -721,6 +790,7 @@
                 this.autoStepping = false;
                 this.autoStepInterval = null;
                 this.isForwardPassMode = false;
+                this.applyingSelections = false;
 
                 this.initializeWebSocket();
                 this.bindEvents();
@@ -761,6 +831,11 @@
                 document.getElementById('stop_auto').addEventListener('click', () => this.stopAutoStepping());
                 document.getElementById('rewind').addEventListener('click', () => this.rewind());
                 document.getElementById('apply_probability_settings').addEventListener('click', () => this.applyProbabilitySettings());
+
+                // New TokenTracker controls
+                document.getElementById('auto_select_tokens').addEventListener('click', () => this.autoSelectTokens());
+                document.getElementById('apply_selections').addEventListener('click', () => this.applySelections());
+                document.getElementById('clear_selections').addEventListener('click', () => this.clearSelections());
 
                 // Gumbel noise checkbox controls
                 document.getElementById('apply_gumbel_noise').addEventListener('change', () => this.toggleGumbelTemperature());
@@ -827,13 +902,14 @@
                 this.updateStatus('Running forward pass...', '');
                 this.isForwardPassMode = true;
 
-                // Tokenize the prompt (simplified - in reality we'd need proper tokenization)
-                // For now, we'll send the prompt and let the backend tokenize it
+                // Use forward_pass message with dual restrictions
                 this.ws.send(JSON.stringify({
-                    type: 'tokenize_and_forward',
+                    type: 'forward_pass',
                     prompt: prompt,
-                    top_k: parseInt(document.getElementById('top_k').value),
-                    gen_length: parseInt(document.getElementById('gen_length').value)
+                    gen_length: parseInt(document.getElementById('gen_length').value),
+                    visual_top_k: parseInt(document.getElementById('visual_top_k').value),
+                    actual_top_k: parseInt(document.getElementById('actual_top_k').value),
+                    top_p: parseFloat(document.getElementById('top_p').value)
                 }));
             }
 
@@ -863,6 +939,9 @@
 
             step() {
                 if (!this.currentState) return;
+
+                // Show selecting tokens status
+                this.updateStatus('Selecting tokens', '');
 
                 const tokensToSelect = parseInt(document.getElementById('tokens_to_select').value);
                 const blockLength = parseInt(document.getElementById('block_length').value);
@@ -931,6 +1010,52 @@
                     type: 'rewind',
                     step: step
                 }));
+            }
+
+            // New TokenTracker methods
+            autoSelectTokens() {
+                const strategy = document.getElementById('selection_strategy').value;
+                const maxTokens = parseInt(document.getElementById('max_tokens').value);
+
+                this.updateStatus('Auto-selecting tokens...', '');
+
+                this.ws.send(JSON.stringify({
+                    type: 'auto_select',
+                    strategy: strategy,
+                    max_tokens: maxTokens
+                }));
+            }
+
+            applySelections() {
+                if (Object.keys(this.manualSelections).length === 0) {
+                    this.updateStatus('No tokens selected to apply', 'error');
+                    return;
+                }
+
+                this.updateStatus('Applying selected tokens...', '');
+                this.applyingSelections = true; // Track that we're applying selections
+
+                this.ws.send(JSON.stringify({
+                    type: 'apply_selection',
+                    selections: this.manualSelections
+                }));
+
+                // Clear manual selections after applying
+                this.manualSelections = {};
+                this.updateManualSelections();
+            }
+
+            clearSelections() {
+                this.manualSelections = {};
+                this.updateManualSelections();
+                this.updateStatus('Manual selections cleared', 'connected');
+
+                // Refresh the token grid
+                if (this.isForwardPassMode && this.forwardPassResult) {
+                    this.updateTokenGrid(this.forwardPassResult.positions);
+                } else if (this.currentState) {
+                    this.updateTokenGrid(this.currentState.positions);
+                }
             }
 
             updateNoise() {
@@ -1006,6 +1131,17 @@
                     document.getElementById('select_tokens').disabled = false;
                     document.getElementById('auto_select').disabled = false;
 
+                    // Enable new TokenTracker controls
+                    document.getElementById('auto_select_tokens').disabled = false;
+                    document.getElementById('apply_selections').disabled = false;
+                    document.getElementById('clear_selections').disabled = false;
+
+                    // Check if this state update is from applying selections
+                    if (this.applyingSelections) {
+                        this.updateStatus('Selections applied successfully', 'connected');
+                        this.applyingSelections = false;
+                    }
+
                     if (message.is_complete) {
                         this.stopAutoStepping();
                         this.showGenerationComplete();
@@ -1014,6 +1150,44 @@
                     this.forwardPassResult = message.result;
                     this.updateStatus('Forward pass complete', 'connected');
                     this.showForwardPassResult();
+                } else if (message.type === 'auto_select_result') {
+                    // Handle auto-selection results
+                    if (message.selections && Object.keys(message.selections).length > 0) {
+                        // Merge auto-selections with manual selections
+                        Object.assign(this.manualSelections, message.selections);
+                        this.updateManualSelections();
+                        this.updateStatus(`Auto-selected ${Object.keys(message.selections).length} tokens`, 'connected');
+
+                        // Show auto-selected tokens in the UI
+                        if (this.isForwardPassMode && this.forwardPassResult) {
+                            this.updateTokenGrid(this.forwardPassResult.positions);
+                        } else if (this.currentState) {
+                            this.updateTokenGrid(this.currentState.positions);
+                        }
+                    } else {
+                        this.updateStatus('No tokens were auto-selected', 'connected');
+                    }
+                } else if (message.type === 'apply_selection_result') {
+                    // Handle selection application results
+                    if (message.success) {
+                        this.updateStatus('Selections applied successfully', 'connected');
+
+                        // Update state if provided
+                        if (message.state) {
+                            this.currentState = message.state;
+                            this.updateVisualization();
+                        }
+
+                        // Show cached indicator if using cached results
+                        if (message.from_cache) {
+                            document.getElementById('visualization').classList.add('cached');
+                            setTimeout(() => {
+                                document.getElementById('visualization').classList.remove('cached');
+                            }, 3000);
+                        }
+                    } else {
+                        this.updateStatus(message.error || 'Failed to apply selections', 'error');
+                    }
                 } else if (message.type === 'reprocessed_probabilities_result') {
                     // Update the UI with new probability data
                     this.forwardPassResult.positions = message.result.positions;
@@ -1026,7 +1200,7 @@
                         this.updateStatus('Model loaded successfully', 'connected');
                         this.updateModelStatus(message.model_path, 'connected');
                         document.getElementById('initialize').disabled = false;
-                        // Forward pass is enabled but requires initialization first
+                        // Forward pass should remain disabled until after initialization
                         document.getElementById('forward_pass').disabled = true;
                         document.getElementById('model_path').value = message.model_path;
                     } else {
@@ -1037,7 +1211,7 @@
                     if (message.is_loaded) {
                         this.updateModelStatus(message.model_path, 'connected');
                         document.getElementById('initialize').disabled = false;
-                        // Forward pass requires initialization first
+                        // Forward pass should remain disabled until after initialization
                         document.getElementById('forward_pass').disabled = true;
                         document.getElementById('model_path').value = message.model_path;
                         this.updateStatus('Connected to server - Model ready', 'connected');
@@ -1098,7 +1272,8 @@
                     softmax_temperature: Math.max(0.1, parseFloat(document.getElementById('softmax_temperature').value) || 1.0),
                     apply_gumbel_noise: document.getElementById('apply_gumbel_noise').checked,
                     gumbel_temperature: parseFloat(document.getElementById('gumbel_temperature').value) || 0.0,
-                    top_k: Math.max(1, Math.min(100, parseInt(document.getElementById('top_k').value) || 10)),
+                    visual_top_k: Math.max(1, Math.min(100, parseInt(document.getElementById('visual_top_k').value) || 20)),
+                    actual_top_k: Math.max(1, Math.min(100, parseInt(document.getElementById('actual_top_k').value) || 10)),
                     top_p: Math.max(0.01, Math.min(1.0, parseFloat(document.getElementById('top_p').value) || 1.0))
                 };
 
@@ -1143,7 +1318,7 @@
 
                 // Update step info
                 document.getElementById('current_step').textContent = this.currentState.step;
-                document.getElementById('current_block').textContent = this.currentState.block;
+                document.getElementById('current_block').textContent = this.currentState.block || '0';
                 document.getElementById('rewind_step').max = this.currentState.step;
 
                 // Enable controls
@@ -1155,7 +1330,7 @@
                 // Update token grid
                 this.updateTokenGrid(this.currentState.positions);
 
-                this.updateStatus(`Step ${this.currentState.step}, Block ${this.currentState.block}`, 'connected');
+                this.updateStatus(`Step ${this.currentState.step}, Block ${this.currentState.block || '0'}`, 'connected');
             }
 
             trackNewlyDecoded(oldState, newState) {
@@ -1261,7 +1436,16 @@
                         const isThisCandidateSelected = isSelected &&
                             this.manualSelections[position.position] === candidate.token_id;
 
-                        candidateEl.className = `token-candidate ${isThisCandidateSelected ? 'selected' : ''}`;
+                        // Check if this candidate is in actual restrictions
+                        const isInActual = candidate.is_in_actual !== undefined ? candidate.is_in_actual : true;
+
+                        // Build CSS classes
+                        let candidateClasses = ['token-candidate'];
+                        if (isThisCandidateSelected) candidateClasses.push('selected');
+                        if (isInActual) candidateClasses.push('in-actual');
+                        else candidateClasses.push('not-in-actual');
+
+                        candidateEl.className = candidateClasses.join(' ');
 
                         // Don't override background for selected candidates (CSS will handle it)
                         if (!isThisCandidateSelected) {
@@ -1272,6 +1456,7 @@
                             <div class="token-text">${candidate.token}</div>
                             <div class="token-prob">${(candidate.prob * 100).toFixed(1)}%</div>
                             <div class="token-logit">${candidate.logit.toFixed(2)}</div>
+                            ${!isInActual ? '<div style="font-size: 8px; color: #888;">(visual only)</div>' : ''}
                         `;
 
                         candidateEl.addEventListener('click', () => {

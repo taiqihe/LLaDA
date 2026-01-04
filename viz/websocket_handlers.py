@@ -109,11 +109,15 @@ class WebSocketMessageHandler:
                 prompt_tokens, gen_length, block_length, self.diffusion_model.tokenizer
             )
 
+            # Add computed block to state dict
+            state_dict = asdict(state)
+            state_dict["block"] = state.step // state.block_length if state.block_length > 0 else 0
+
             await websocket.send_text(
                 json.dumps(
                     {
                         "type": MessageTypes.STATE_UPDATE,
-                        "state": asdict(state),
+                        "state": state_dict,
                     }
                 )
             )
@@ -145,10 +149,20 @@ class WebSocketMessageHandler:
             # Get cached results
             cached_results = self.diffusion_model.get_cached_results()
 
+            # Match cached results to current state length
+            current_length = len(self.token_tracker.current_state.token_ids)
+            cached_probs = cached_results['probs']
+            cached_x0 = cached_results['x0']
+
+            # Slice cached results to match current state length
+            if len(cached_probs) > current_length:
+                cached_probs = cached_probs[:current_length]
+                cached_x0 = cached_x0[:current_length]
+
             # Perform auto selection using cached data
             selected_tokens = self.token_tracker.auto_select(
-                probabilities=cached_results['probs'],
-                x0=cached_results['x0'],
+                probabilities=cached_probs,
+                x0=cached_x0,
                 strategy=strategy,
                 max_tokens=tokens_to_select,
                 selection_method=selection_method
@@ -157,8 +171,8 @@ class WebSocketMessageHandler:
             await websocket.send_text(
                 json.dumps(
                     {
-                        "type": MessageTypes.STATE_UPDATE,
-                        "selected_tokens": selected_tokens,
+                        "type": MessageTypes.AUTO_SELECT_RESULT,
+                        "selections": selected_tokens,
                         "message": f"Auto-selected {len(selected_tokens)} tokens using {strategy} strategy.",
                     }
                 )
@@ -197,11 +211,15 @@ class WebSocketMessageHandler:
             # Apply selections
             updated_state = self.token_tracker.apply_selections(validated_selections, self.diffusion_model.tokenizer)
 
+            # Add computed block to state dict
+            state_dict = asdict(updated_state)
+            state_dict["block"] = updated_state.step // updated_state.block_length if updated_state.block_length > 0 else 0
+
             await websocket.send_text(
                 json.dumps(
                     {
                         "type": MessageTypes.STATE_UPDATE,
-                        "state": asdict(updated_state),
+                        "state": state_dict,
                     }
                 )
             )
@@ -209,45 +227,44 @@ class WebSocketMessageHandler:
             await self._send_error(websocket, f"Error applying selections: {str(e)}")
 
     async def _handle_forward_pass(self, websocket: WebSocket, message: Dict[str, Any]):
-        """Handle forward pass with provided tokens"""
+        """Handle forward pass - either on current state or with provided tokens"""
         try:
-            # Validate tokens
-            tokens = message.get("tokens")
-            if not tokens or not isinstance(tokens, list):
-                await self._send_error(websocket, "Invalid tokens: must be a non-empty list of token IDs.")
-                return
-
-            # Validate token IDs
-            try:
-                validated_tokens = [int(t) for t in tokens]
-                if any(t < 0 for t in validated_tokens):
-                    await self._send_error(websocket, "Invalid tokens: all token IDs must be non-negative integers.")
-                    return
-            except (ValueError, TypeError):
-                await self._send_error(websocket, "Invalid tokens: all items must be integers.")
-                return
-
-            top_k = message.get("top_k", 10)
-            if not isinstance(top_k, int) or top_k < 1 or top_k > 50000:
-                await self._send_error(websocket, "Invalid top_k: must be an integer between 1 and 50000.")
-                return
-
             # Check if model is loaded
             if not self.diffusion_model.is_model_loaded():
                 await self._send_error(websocket, "No model loaded. Please load a model first.")
                 return
 
+            # Check if generation is initialized
+            if not self.token_tracker.is_initialized():
+                await self._send_error(websocket, "Generation not initialized. Please initialize first.")
+                return
+
+            # Send status update
+            await websocket.send_text(json.dumps({
+                "type": MessageTypes.STATE_UPDATE,
+                "message": "Running forward pass..."
+            }))
+
+            # Get visual and actual top_k from message
             visual_top_k = message.get("visual_top_k", self.config["visual_top_k"])
             actual_top_k = message.get("actual_top_k", self.config["actual_top_k"])
             top_p = message.get("top_p", self.config["top_p"])
 
+            # Get current state from token tracker
+            current_state = self.token_tracker.current_state
+            if not current_state:
+                await self._send_error(websocket, "No current generation state available.")
+                return
+
+            # Run forward pass on current state to get token candidates
             result = self.diffusion_model.forward_pass_with_prompt(
-                validated_tokens,
-                gen_length=len(validated_tokens),
+                current_state.token_ids,
+                gen_length=len(current_state.token_ids),
                 visual_top_k=visual_top_k,
                 actual_top_k=actual_top_k,
                 top_p=top_p
             )
+
             await websocket.send_text(json.dumps({"type": MessageTypes.FORWARD_PASS_RESULT, "result": result}))
         except Exception as e:
             await self._send_error(websocket, f"Error in forward pass: {str(e)}")
@@ -295,11 +312,15 @@ class WebSocketMessageHandler:
 
             state = self.token_tracker.rewind_to_step(step)
             if state:
+                # Add computed block to state dict
+                state_dict = asdict(state)
+                state_dict["block"] = state.step // state.block_length if state.block_length > 0 else 0
+
                 await websocket.send_text(
                     json.dumps(
                         {
                             "type": MessageTypes.STATE_UPDATE,
-                            "state": asdict(state),
+                            "state": state_dict,
                         }
                     )
                 )
