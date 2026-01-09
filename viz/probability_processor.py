@@ -17,7 +17,7 @@ class ProbabilityProcessor:
         self,
         logits: torch.Tensor,
         softmax_temperature: float = 1.0,
-        gumbel_temperature: float = 0.0
+        gumbel_temperature: float = 0.0,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Convert logits to probabilities and apply temperature/noise"""
         # Apply softmax temperature
@@ -98,7 +98,7 @@ class ProbabilityProcessor:
         visual_top_k: int,
         actual_top_k: int,
         top_p: float,
-        tokenizer
+        tokenizer,
     ) -> Tuple[List[TokenCandidate], int]:
         """Get token candidates with both visual and actual restrictions"""
         # Check for valid probabilities
@@ -126,23 +126,21 @@ class ProbabilityProcessor:
             # Mark whether this token is within actual restrictions
             is_in_actual = rank < actual_restricted_k
 
-            candidates.append(TokenCandidate(
-                token=token_text,
-                token_id=token_id,
-                logit=float(logits[idx].item()),
-                prob=float(probs[idx].item()),
-                rank=rank,
-                is_in_actual=is_in_actual
-            ))
+            candidates.append(
+                TokenCandidate(
+                    token=token_text,
+                    token_id=token_id,
+                    logit=float(logits[idx].item()),
+                    prob=float(probs[idx].item()),
+                    rank=rank,
+                    is_in_actual=is_in_actual,
+                )
+            )
 
         return candidates, actual_restricted_k
 
     def get_token_candidates(
-        self,
-        logits: torch.Tensor,
-        probs: torch.Tensor,
-        top_k: int,
-        tokenizer
+        self, logits: torch.Tensor, probs: torch.Tensor, top_k: int, tokenizer
     ) -> List[TokenCandidate]:
         """Get top-k token candidates for a position"""
         # Check for valid probabilities
@@ -161,22 +159,19 @@ class ProbabilityProcessor:
             except:
                 token_text = f"<token_{token_id}>"
 
-            candidates.append(TokenCandidate(
-                token=token_text,
-                token_id=token_id,
-                logit=float(logits[idx].item()),
-                prob=float(probs[idx].item()),
-                rank=rank
-            ))
+            candidates.append(
+                TokenCandidate(
+                    token=token_text,
+                    token_id=token_id,
+                    logit=float(logits[idx].item()),
+                    prob=float(probs[idx].item()),
+                    rank=rank,
+                )
+            )
 
         return candidates
 
-    def reprocess_probabilities_with_settings(
-        self,
-        raw_logits: List[List[float]],
-        settings: Dict,
-        tokenizer
-    ) -> Dict:
+    def reprocess_probabilities_with_settings(self, raw_logits: List[List[float]], settings: Dict, tokenizer) -> Dict:
         """Reprocess raw logits with new probability settings"""
         try:
             # Handle new sparse logits format
@@ -189,14 +184,17 @@ class ProbabilityProcessor:
             # This avoids memory issues and message size problems
 
             # Apply new settings with validation
-            softmax_temp = max(MIN_TEMPERATURE, float(settings.get('softmax_temperature', 1.0)))
-            top_k = max(1, int(settings.get('top_k', 3)))  # Limit to 3 for message size
+            softmax_temp = max(MIN_TEMPERATURE, float(settings.get("softmax_temperature", 1.0)))
+            visual_top_k = max(1, int(settings.get("visual_top_k", 20)))
+            actual_top_k = max(1, int(settings.get("actual_top_k", 10)))
+            apply_gumbel_noise = bool(settings.get("apply_gumbel_noise", False))
+            gumbel_temperature = float(settings.get("gumbel_temperature", 0.0))
 
-            print(f"Settings: softmax_temp={softmax_temp}, top_k={top_k}")
+            print(f"Settings: softmax_temp={softmax_temp}, visual_top_k={visual_top_k}, actual_top_k={actual_top_k}, gumbel={apply_gumbel_noise}/{gumbel_temperature}")
 
-            # Process sparse logits
+            # Process sparse logits for all positions
             positions_data = []
-            for i, pos_sparse_logits in enumerate(raw_logits[:5]):  # Limit to 5 positions
+            for i, pos_sparse_logits in enumerate(raw_logits):
                 if not isinstance(pos_sparse_logits, dict):
                     continue
 
@@ -210,43 +208,65 @@ class ProbabilityProcessor:
                 # Apply temperature scaling
                 scaled_logits = [logit / softmax_temp for logit in logit_values]
 
+                # Apply Gumbel noise if enabled
+                if apply_gumbel_noise and gumbel_temperature > 0:
+                    import random
+                    noisy_logits = []
+                    for logit in scaled_logits:
+                        noise = random.random()
+                        if noise > 0:
+                            gumbel_noise = (-math.log(noise)) ** gumbel_temperature
+                            noisy_value = math.exp(logit) / gumbel_noise
+                            noisy_logits.append(math.log(noisy_value + EPSILON))
+                        else:
+                            noisy_logits.append(logit)
+                    scaled_logits = noisy_logits
+
                 # Convert to probabilities
                 max_logit = max(scaled_logits)
                 exp_logits = [math.exp(logit - max_logit) for logit in scaled_logits]
                 sum_exp = sum(exp_logits)
                 probs = [exp_logit / sum_exp for exp_logit in exp_logits]
 
+                # Sort by probability
+                sorted_indices = sorted(range(len(probs)), key=lambda k: probs[k], reverse=True)
+
+                # Limit to visual_top_k candidates
+                num_candidates_to_show = min(visual_top_k, len(sorted_indices))
+
                 # Create candidates
                 candidates_data = []
-                for j, (token_id, prob) in enumerate(zip(token_ids, probs)):
-                    if j >= top_k:  # Limit candidates
-                        break
+                for rank in range(num_candidates_to_show):
+                    j = sorted_indices[rank]
+                    token_id = token_ids[j]
+                    prob = probs[j]
 
                     try:
                         token_text = tokenizer.decode([int(token_id)])
                     except:
                         token_text = f"<token_{token_id}>"
 
-                    candidates_data.append({
-                        'token': token_text[:10],  # Truncate token text
-                        'token_id': int(token_id),
-                        'logit': round(scaled_logits[j], 2),
-                        'prob': round(prob, 3),
-                        'rank': j
-                    })
+                    # Mark if this is within actual_top_k
+                    is_in_actual = rank < actual_top_k
 
-                positions_data.append({
-                    'position': i,
-                    'candidates': candidates_data
-                })
+                    candidates_data.append(
+                        {
+                            "token": token_text,
+                            "token_id": int(token_id),
+                            "logit": round(scaled_logits[j], 2),
+                            "prob": round(prob, 4),
+                            "rank": rank,
+                            "is_in_actual": is_in_actual,
+                        }
+                    )
 
-            return {
-                'positions': positions_data,
-                'settings_applied': settings
-            }
+                positions_data.append({"position": i, "candidates": candidates_data})
+
+            return {"positions": positions_data, "settings_applied": settings}
 
         except Exception as e:
             print(f"Error in reprocess_probabilities_with_settings: {e}")
             import traceback
+
             traceback.print_exc()
             raise

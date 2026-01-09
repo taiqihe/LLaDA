@@ -588,8 +588,10 @@
                 <h3>Generation Controls</h3>
                 <div class="control-row">
                     <div class="button-group">
-                        <button class="btn secondary" id="forward_pass" disabled>Forward Pass</button>
-                        <button class="btn secondary" id="step" disabled>Step</button>
+                        <button class="btn secondary" id="forward_pass" disabled>
+                            <span id="forward_pass_text">Forward Pass</span>
+                            <span id="forward_pass_loader" style="display: none;">Running...</span>
+                        </button>
                         <button class="btn secondary" id="stop_auto" disabled>Stop</button>
                     </div>
                 </div>
@@ -693,28 +695,6 @@
                         <div class="button-group">
                             <button class="btn" id="apply_selections" disabled>Apply Selected Tokens</button>
                             <button class="btn secondary" id="clear_selections" disabled>Clear All Selections</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Legacy Controls (kept for compatibility) -->
-                <div class="subsection">
-                    <h4>Legacy Generation Controls</h4>
-                    <div class="control-row">
-                        <div class="control-group">
-                            <label>Block Length</label>
-                            <input type="number" id="block_length" value="32" min="1" max="128">
-                        </div>
-
-                        <div class="control-group">
-                            <label>Tokens to Select</label>
-                            <input type="number" id="tokens_to_select" value="1" min="1" max="32">
-                            <small>Number of tokens to decode in each selection step</small>
-                        </div>
-
-                        <div class="button-group">
-                            <button class="btn secondary" id="select_tokens" disabled>Select Tokens</button>
-                            <button class="btn secondary" id="auto_select" disabled>Auto Select (Legacy)</button>
                         </div>
                     </div>
                 </div>
@@ -825,9 +805,6 @@
                 document.getElementById('load_model').addEventListener('click', () => this.loadModel());
                 document.getElementById('initialize').addEventListener('click', () => this.initialize());
                 document.getElementById('forward_pass').addEventListener('click', () => this.runForwardPass());
-                document.getElementById('step').addEventListener('click', () => this.step());
-                document.getElementById('select_tokens').addEventListener('click', () => this.selectTokensOnly());
-                document.getElementById('auto_select').addEventListener('click', () => this.startAutoStepping());
                 document.getElementById('stop_auto').addEventListener('click', () => this.stopAutoStepping());
                 document.getElementById('rewind').addEventListener('click', () => this.rewind());
                 document.getElementById('apply_probability_settings').addEventListener('click', () => this.applyProbabilitySettings());
@@ -839,20 +816,6 @@
 
                 // Gumbel noise checkbox controls
                 document.getElementById('apply_gumbel_noise').addEventListener('change', () => this.toggleGumbelTemperature());
-
-                // Update block length constraint
-                document.getElementById('gen_length').addEventListener('input', this.updateBlockLengthConstraint);
-                document.getElementById('block_length').addEventListener('input', this.updateBlockLengthConstraint);
-            }
-
-            updateBlockLengthConstraint() {
-                const genLength = parseInt(document.getElementById('gen_length').value);
-                const blockLength = parseInt(document.getElementById('block_length').value);
-
-                if (genLength % blockLength !== 0) {
-                    const maxBlockLength = Math.floor(genLength / Math.floor(genLength / blockLength));
-                    document.getElementById('block_length').value = maxBlockLength;
-                }
             }
 
             updateStatus(message, type = '') {
@@ -902,6 +865,11 @@
                 this.updateStatus('Running forward pass...', '');
                 this.isForwardPassMode = true;
 
+                // Show loading indicator
+                document.getElementById('forward_pass_text').style.display = 'none';
+                document.getElementById('forward_pass_loader').style.display = 'inline';
+                document.getElementById('forward_pass').disabled = true;
+
                 // Use forward_pass message with dual restrictions
                 this.ws.send(JSON.stringify({
                     type: 'forward_pass',
@@ -916,7 +884,6 @@
             initialize() {
                 const prompt = document.getElementById('prompt').value;
                 const genLength = parseInt(document.getElementById('gen_length').value);
-                const blockLength = parseInt(document.getElementById('block_length').value);
 
                 if (!prompt.trim()) {
                     this.updateStatus('Please enter a prompt', 'error');
@@ -931,75 +898,10 @@
                     type: 'initialize',
                     prompt: prompt,
                     gen_length: genLength,
-                    block_length: blockLength
+                    block_length: genLength  // Use gen_length as block_length since we're not using blocks
                 }));
 
                 this.updateStatus('Initializing generation...', '');
-            }
-
-            step() {
-                if (!this.currentState) return;
-
-                // Show selecting tokens status
-                this.updateStatus('Selecting tokens', '');
-
-                const tokensToSelect = parseInt(document.getElementById('tokens_to_select').value);
-                const blockLength = parseInt(document.getElementById('block_length').value);
-                const gumbelTemperature = parseFloat(document.getElementById('gumbel_temperature').value);
-                const remasking = document.getElementById('remasking').value;
-                const topK = parseInt(document.getElementById('top_k').value);
-
-                this.ws.send(JSON.stringify({
-                    type: 'step',
-                    tokens_to_select: tokensToSelect,
-                    block_length: blockLength,
-                    gumbel_temperature: gumbelTemperature,
-                    remasking: remasking,
-                    top_k: topK,
-                    manual_selections: this.manualSelections
-                }));
-
-                this.updateStatus('Selecting tokens...', '');
-            }
-
-            selectTokensOnly() {
-                if (!this.currentState) return;
-
-                const tokensToSelect = parseInt(document.getElementById('tokens_to_select').value);
-                const remasking = document.getElementById('remasking').value;
-
-                this.ws.send(JSON.stringify({
-                    type: 'select_tokens_only',
-                    tokens_to_select: tokensToSelect,
-                    remasking: remasking,
-                    manual_selections: this.manualSelections
-                }));
-
-                this.updateStatus('Selecting tokens...', '');
-            }
-
-            startAutoStepping() {
-                if (this.autoStepping) return;
-
-                this.autoStepping = true;
-                document.getElementById('auto_select').disabled = true;
-                document.getElementById('stop_auto').disabled = false;
-
-                // Auto-select now only does token selection (no forward pass)
-                this.autoStepInterval = setInterval(() => {
-                    if (!this.autoStepping) return;
-                    this.selectTokensOnly();
-                }, 1000);
-            }
-
-            stopAutoStepping() {
-                this.autoStepping = false;
-                if (this.autoStepInterval) {
-                    clearInterval(this.autoStepInterval);
-                    this.autoStepInterval = null;
-                }
-                document.getElementById('auto_select').disabled = false;
-                document.getElementById('stop_auto').disabled = true;
             }
 
             rewind() {
@@ -1126,10 +1028,6 @@
 
                     // Enable forward pass button after initialization
                     document.getElementById('forward_pass').disabled = false;
-                    document.getElementById('step').disabled = false;
-                    // Enable token selection buttons after step completion (logits are cached)
-                    document.getElementById('select_tokens').disabled = false;
-                    document.getElementById('auto_select').disabled = false;
 
                     // Enable new TokenTracker controls
                     document.getElementById('auto_select_tokens').disabled = false;
@@ -1143,12 +1041,17 @@
                     }
 
                     if (message.is_complete) {
-                        this.stopAutoStepping();
                         this.showGenerationComplete();
                     }
                 } else if (message.type === 'forward_pass_result') {
                     this.forwardPassResult = message.result;
                     this.updateStatus('Forward pass complete', 'connected');
+
+                    // Hide loading indicator
+                    document.getElementById('forward_pass_text').style.display = 'inline';
+                    document.getElementById('forward_pass_loader').style.display = 'none';
+                    document.getElementById('forward_pass').disabled = false;
+
                     this.showForwardPassResult();
                 } else if (message.type === 'auto_select_result') {
                     // Handle auto-selection results
@@ -1189,10 +1092,25 @@
                         this.updateStatus(message.error || 'Failed to apply selections', 'error');
                     }
                 } else if (message.type === 'reprocessed_probabilities_result') {
-                    // Update the UI with new probability data
-                    this.forwardPassResult.positions = message.result.positions;
-                    this.updateTokenGrid(this.forwardPassResult.positions);
-                    this.updateStatus('Probability settings applied successfully', 'connected');
+                    // Update the UI with new probability data by merging candidates
+                    // Preserve other position metadata like is_masked, is_prompt, current_token, etc.
+                    const newPositions = message.result.positions;
+
+                    if (this.forwardPassResult && this.forwardPassResult.positions) {
+                        // Merge new candidates into existing positions
+                        newPositions.forEach(newPos => {
+                            const existingPos = this.forwardPassResult.positions[newPos.position];
+                            if (existingPos) {
+                                // Update only the candidates, keep everything else
+                                existingPos.candidates = newPos.candidates;
+                            }
+                        });
+
+                        this.updateTokenGrid(this.forwardPassResult.positions);
+                        this.updateStatus('Probability settings applied successfully', 'connected');
+                    } else {
+                        this.updateStatus('No forward pass result to update', 'error');
+                    }
                 } else if (message.type === 'model_load_result') {
                     document.getElementById('load_model').disabled = false;
 
@@ -1322,8 +1240,6 @@
                 document.getElementById('rewind_step').max = this.currentState.step;
 
                 // Enable controls
-                document.getElementById('step').disabled = false;
-                document.getElementById('auto_select').disabled = false;
                 document.getElementById('rewind').disabled = this.currentState.step === 0;
                 document.getElementById('visualization').style.display = 'block';
 

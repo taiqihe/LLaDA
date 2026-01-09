@@ -59,7 +59,7 @@ class WebSocketMessageHandler:
                         "type": MessageTypes.MODEL_LOAD_RESULT,
                         "success": success,
                         "model_path": model_path if success else None,
-                        "error": None if success else f"Failed to load model from {model_path}",
+                        "error": (None if success else f"Failed to load model from {model_path}"),
                     }
                 )
             )
@@ -88,12 +88,18 @@ class WebSocketMessageHandler:
 
             gen_length = message.get("gen_length", self.config["gen_length"])
             if not isinstance(gen_length, int) or gen_length < 1 or gen_length > 1024:
-                await self._send_error(websocket, "Invalid gen_length: must be an integer between 1 and 1024.")
+                await self._send_error(
+                    websocket,
+                    "Invalid gen_length: must be an integer between 1 and 1024.",
+                )
                 return
 
             block_length = message.get("block_length", self.config["block_length"])
             if not isinstance(block_length, int) or block_length < 1 or block_length > gen_length:
-                await self._send_error(websocket, "Invalid block_length: must be an integer between 1 and gen_length.")
+                await self._send_error(
+                    websocket,
+                    "Invalid block_length: must be an integer between 1 and gen_length.",
+                )
                 return
 
             # Check if model is loaded
@@ -134,7 +140,10 @@ class WebSocketMessageHandler:
 
             # Check if we have cached forward pass results
             if not self.diffusion_model.has_cached_results():
-                await self._send_error(websocket, "No forward pass results available. Please run forward pass first.")
+                await self._send_error(
+                    websocket,
+                    "No forward pass results available. Please run forward pass first.",
+                )
                 return
 
             # Validate required parameters
@@ -151,8 +160,8 @@ class WebSocketMessageHandler:
 
             # Match cached results to current state length
             current_length = len(self.token_tracker.current_state.token_ids)
-            cached_probs = cached_results['probs']
-            cached_x0 = cached_results['x0']
+            cached_probs = cached_results["probs"]
+            cached_x0 = cached_results["x0"]
 
             # Slice cached results to match current state length
             if len(cached_probs) > current_length:
@@ -165,7 +174,7 @@ class WebSocketMessageHandler:
                 x0=cached_x0,
                 strategy=strategy,
                 max_tokens=tokens_to_select,
-                selection_method=selection_method
+                selection_method=selection_method,
             )
 
             await websocket.send_text(
@@ -191,7 +200,10 @@ class WebSocketMessageHandler:
             # Get selections from message
             selections = message.get("selections", {})
             if not selections or not isinstance(selections, dict):
-                await self._send_error(websocket, "No valid selections provided. Must be a dictionary of position: token_id.")
+                await self._send_error(
+                    websocket,
+                    "No valid selections provided. Must be a dictionary of position: token_id.",
+                )
                 return
 
             # Validate selections format
@@ -201,11 +213,17 @@ class WebSocketMessageHandler:
                     pos_int = int(pos)
                     token_id_int = int(token_id)
                     if pos_int < 0 or token_id_int < 0:
-                        await self._send_error(websocket, f"Invalid selection: position {pos_int} and token_id {token_id_int} must be non-negative.")
+                        await self._send_error(
+                            websocket,
+                            f"Invalid selection: position {pos_int} and token_id {token_id_int} must be non-negative.",
+                        )
                         return
                     validated_selections[pos_int] = token_id_int
             except (ValueError, TypeError):
-                await self._send_error(websocket, "Invalid selections format. Positions and token IDs must be integers.")
+                await self._send_error(
+                    websocket,
+                    "Invalid selections format. Positions and token IDs must be integers.",
+                )
                 return
 
             # Apply selections
@@ -213,7 +231,9 @@ class WebSocketMessageHandler:
 
             # Add computed block to state dict
             state_dict = asdict(updated_state)
-            state_dict["block"] = updated_state.step // updated_state.block_length if updated_state.block_length > 0 else 0
+            state_dict["block"] = (
+                updated_state.step // updated_state.block_length if updated_state.block_length > 0 else 0
+            )
 
             await websocket.send_text(
                 json.dumps(
@@ -240,15 +260,20 @@ class WebSocketMessageHandler:
                 return
 
             # Send status update
-            await websocket.send_text(json.dumps({
-                "type": MessageTypes.STATE_UPDATE,
-                "message": "Running forward pass..."
-            }))
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": MessageTypes.STATE_UPDATE,
+                        "message": "Running forward pass...",
+                    }
+                )
+            )
 
-            # Get visual and actual top_k from message
+            # Get parameters from message
             visual_top_k = message.get("visual_top_k", self.config["visual_top_k"])
             actual_top_k = message.get("actual_top_k", self.config["actual_top_k"])
             top_p = message.get("top_p", self.config["top_p"])
+            gen_length = message.get("gen_length", self.config["gen_length"])
 
             # Get current state from token tracker
             current_state = self.token_tracker.current_state
@@ -256,13 +281,16 @@ class WebSocketMessageHandler:
                 await self._send_error(websocket, "No current generation state available.")
                 return
 
-            # Run forward pass on current state to get token candidates
+            # Extract prompt tokens from current state (everything up to prompt_length)
+            prompt_tokens = current_state.token_ids[: current_state.prompt_length]
+
+            # Run forward pass with the prompt and desired generation length
             result = self.diffusion_model.forward_pass_with_prompt(
-                current_state.token_ids,
-                gen_length=len(current_state.token_ids),
+                prompt_tokens,
+                gen_length=gen_length,
                 visual_top_k=visual_top_k,
                 actual_top_k=actual_top_k,
-                top_p=top_p
+                top_p=top_p,
             )
 
             await websocket.send_text(json.dumps({"type": MessageTypes.FORWARD_PASS_RESULT, "result": result}))
@@ -284,7 +312,10 @@ class WebSocketMessageHandler:
             result = self.diffusion_model.reprocess_probabilities_with_settings(raw_logits, settings)
             print("Reprocessing completed successfully")
 
-            response = {"type": MessageTypes.REPROCESSED_PROBABILITIES_RESULT, "result": result}
+            response = {
+                "type": MessageTypes.REPROCESSED_PROBABILITIES_RESULT,
+                "result": result,
+            }
 
             response_json = json.dumps(response)
             print(f"Response size: {len(response_json)} characters")
@@ -356,5 +387,11 @@ class WebSocketMessageHandler:
             )
         else:
             await websocket.send_text(
-                json.dumps({"type": MessageTypes.MODEL_STATUS, "is_loaded": False, "model_path": None})
+                json.dumps(
+                    {
+                        "type": MessageTypes.MODEL_STATUS,
+                        "is_loaded": False,
+                        "model_path": None,
+                    }
+                )
             )
