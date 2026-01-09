@@ -8,7 +8,7 @@ REMASKING_STRATEGIES = [
     "high_confidence",
     "low_entropy",
     "high_entropy",
-    "random"
+    "random",
 ]
 
 # Numerical stability

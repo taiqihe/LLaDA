@@ -88,13 +88,19 @@ class TokenTracker:
         return self.current_state is not None
 
     def initialize_generation(
-        self, prompt_tokens: List[int], gen_length: int = 128, block_length: int = 32, tokenizer=None
+        self,
+        prompt_tokens: List[int],
+        gen_length: int = 128,
+        block_length: int = 32,
+        tokenizer=None,
     ) -> GenerationState:
         """Initialize generation state"""
         if tokenizer is None:
             raise ValueError("Tokenizer is required for generation initialization")
 
-        token_tracker_logger.info(f"Initializing generation: prompt_length={len(prompt_tokens)}, gen_length={gen_length}, block_length={block_length}")
+        token_tracker_logger.info(
+            f"Initializing generation: prompt_length={len(prompt_tokens)}, gen_length={gen_length}, block_length={block_length}"
+        )
 
         x = np.full(len(prompt_tokens) + gen_length, self.mask_id, dtype=np.int64)
         x[: len(prompt_tokens)] = prompt_tokens
@@ -216,7 +222,7 @@ class TokenTracker:
         confidence_scores = self.token_selector.apply_ranking_strategy(block_probs, strategy)
 
         # Only consider masked positions for selection
-        confidence_scores = torch.where(masked_in_block, confidence_scores, torch.tensor(-float('inf')))
+        confidence_scores = torch.where(masked_in_block, confidence_scores, torch.tensor(-float("inf")))
 
         # Select top tokens based on confidence scores
         if max_tokens > masked_in_block.sum():
@@ -236,7 +242,6 @@ class TokenTracker:
             selected_tokens[absolute_pos] = predicted_token
 
         return selected_tokens
-
 
     def rewind_to_step(self, step: int) -> Optional[GenerationState]:
         """Rewind generation to a previous step"""

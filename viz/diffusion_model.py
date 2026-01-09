@@ -2,7 +2,6 @@ import torch
 import torch.nn.functional as F
 import traceback
 from typing import Optional, List, Dict
-from transformers import AutoModel, AutoTokenizer
 
 from probability_processor import ProbabilityProcessor
 from logger_config import diffusion_logger
@@ -22,13 +21,19 @@ class ModelLoader:
             diffusion_logger.info(f"Loading model from {model_path} on {self.device}...")
 
             tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-            model = AutoModel.from_pretrained(
-                model_path,
-                trust_remote_code=True,
-                dtype=torch.bfloat16
-            ).to(self.device).eval()
+            model = (
+                AutoModel.from_pretrained(
+                    model_path,
+                    trust_remote_code=True,
+                    dtype="auto",
+                )
+                .to(self.device)
+                .eval()
+            )
 
-            diffusion_logger.info(f"Model loaded successfully! Parameters: {sum(p.numel() for p in model.parameters()):,}")
+            diffusion_logger.info(
+                f"Model loaded successfully! Parameters: {sum(p.numel() for p in model.parameters()):,}"
+            )
             return model, tokenizer, True
 
         except Exception as e:
@@ -89,7 +94,7 @@ class DiffusionModel:
         gen_length: int = 128,
         visual_top_k: int = 20,
         actual_top_k: int = 10,
-        top_p: float = 1.0
+        top_p: float = 1.0,
     ) -> Dict:
         """Run a forward pass with masked tokens and return logits for all positions"""
         if not self.is_model_loaded():
@@ -98,7 +103,7 @@ class DiffusionModel:
         # Create sequence with prompt + masked tokens
         total_length = len(prompt_tokens) + gen_length
         x = torch.full((1, total_length), self.mask_id, dtype=torch.long).to(self.device)
-        x[:, :len(prompt_tokens)] = torch.tensor(prompt_tokens).to(self.device)
+        x[:, : len(prompt_tokens)] = torch.tensor(prompt_tokens).to(self.device)
 
         # Run forward pass
         logits = self.run_forward_pass(x)[0]  # Remove batch dimension
@@ -129,31 +134,38 @@ class DiffusionModel:
 
                 # Get candidates with restrictions
                 candidates, actual_restricted_k = self.prob_processor.get_token_candidates_with_restrictions(
-                    pos_logits, pos_probs, visual_top_k, actual_top_k, top_p, self.tokenizer
+                    pos_logits,
+                    pos_probs,
+                    visual_top_k,
+                    actual_top_k,
+                    top_p,
+                    self.tokenizer,
                 )
 
                 # Convert to dict format for JSON serialization
                 candidates_dict = [
                     {
-                        'token': c.token,
-                        'token_id': c.token_id,
-                        'logit': c.logit,
-                        'prob': c.prob,
-                        'rank': c.rank,
-                        'is_in_actual': c.is_in_actual
+                        "token": c.token,
+                        "token_id": c.token_id,
+                        "logit": c.logit,
+                        "prob": c.prob,
+                        "rank": c.rank,
+                        "is_in_actual": c.is_in_actual,
                     }
                     for c in candidates
                 ]
 
-                positions_data.append({
-                    'position': i,
-                    'current_token': current_token,
-                    'current_token_id': current_token_id,
-                    'is_masked': is_masked,
-                    'candidates': candidates_dict,
-                    'is_prompt': i < len(prompt_tokens),
-                    'actual_top_k': actual_restricted_k
-                })
+                positions_data.append(
+                    {
+                        "position": i,
+                        "current_token": current_token,
+                        "current_token_id": current_token_id,
+                        "is_masked": is_masked,
+                        "candidates": candidates_dict,
+                        "is_prompt": i < len(prompt_tokens),
+                        "actual_top_k": actual_restricted_k,
+                    }
+                )
 
         # Limit raw_logits to avoid massive WebSocket messages
         # Only include top-k logits for the first few positions
@@ -171,10 +183,10 @@ class DiffusionModel:
             limited_logits.append(sparse_logits)
 
         return {
-            'positions': positions_data,
-            'raw_logits': limited_logits,  # Limited sparse logits to avoid message size issues
-            'tokens': x[0].cpu().tolist(),
-            'prompt_length': len(prompt_tokens)
+            "positions": positions_data,
+            "raw_logits": limited_logits,  # Limited sparse logits to avoid message size issues
+            "tokens": x[0].cpu().tolist(),
+            "prompt_length": len(prompt_tokens),
         }
 
     def tokenize_prompt(self, prompt: str) -> List[int]:
@@ -191,16 +203,16 @@ class DiffusionModel:
         if not self.is_model_loaded():
             raise ValueError("Model not loaded")
 
-        return self.prob_processor.reprocess_probabilities_with_settings(
-            raw_logits, settings, self.tokenizer
-        )
+        return self.prob_processor.reprocess_probabilities_with_settings(raw_logits, settings, self.tokenizer)
 
     def has_cached_results(self) -> bool:
         """Check if forward pass results are cached"""
-        return (self._cached_logits is not None and
-                self._cached_probs is not None and
-                self._cached_x0 is not None and
-                self._cached_tokens is not None)
+        return (
+            self._cached_logits is not None
+            and self._cached_probs is not None
+            and self._cached_x0 is not None
+            and self._cached_tokens is not None
+        )
 
     def get_cached_results(self) -> Optional[Dict]:
         """Get cached forward pass results"""
@@ -208,11 +220,11 @@ class DiffusionModel:
             return None
 
         return {
-            'logits': self._cached_logits,
-            'probs': self._cached_probs,
-            'x0': self._cached_x0,
-            'tokens': self._cached_tokens,
-            'prompt_length': self._cached_prompt_length
+            "logits": self._cached_logits,
+            "probs": self._cached_probs,
+            "x0": self._cached_x0,
+            "tokens": self._cached_tokens,
+            "prompt_length": self._cached_prompt_length,
         }
 
     def clear_cache(self):

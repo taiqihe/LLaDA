@@ -71,6 +71,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"Unexpected error in WebSocket connection: {e}")
         import traceback
+
         traceback.print_exc()
 
 
@@ -78,7 +79,12 @@ if __name__ == "__main__":
     import uvicorn
 
     parser = argparse.ArgumentParser(description="Diffusion Language Model Visualizer")
-    parser.add_argument("--model-path", "-m", type=str, help="Path to the model (local path or HuggingFace model ID)")
+    parser.add_argument(
+        "--model-path",
+        "-m",
+        type=str,
+        help="Path to the model (local path or HuggingFace model ID)",
+    )
     parser.add_argument("--host", default=DEFAULT_CONFIG["host"], help="Host to bind to")
     parser.add_argument("--port", type=int, default=DEFAULT_CONFIG["port"], help="Port to bind to")
 
